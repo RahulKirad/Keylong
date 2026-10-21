@@ -1,5 +1,6 @@
 import { ASSISTANT_SYSTEM_PROMPT, buildTripKnowledgeDocument } from './tripKnowledge';
 import type { GeminiConfig } from './geminiConfig';
+import { DEFAULT_GEMINI_MODEL } from './geminiConfig';
 
 export type ChatTurn = { role: 'user' | 'model'; text: string };
 
@@ -14,6 +15,8 @@ export async function sendToGemini(
     throw new Error('Add your Gemini API key in AI settings (gear icon).');
   }
 
+  const model = config.model?.trim() || DEFAULT_GEMINI_MODEL;
+
   const contents = [
     ...history.map((t) => ({
       role: t.role === 'user' ? 'user' : 'model',
@@ -22,18 +25,21 @@ export async function sendToGemini(
     { role: 'user', parts: [{ text: userMessage }] },
   ];
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${encodeURIComponent(config.apiKey.trim())}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const apiKey = config.apiKey.trim();
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
     body: JSON.stringify({
       system_instruction: {
         parts: [{ text: ASSISTANT_SYSTEM_PROMPT + knowledge }],
       },
       contents,
       generationConfig: {
-        temperature: 0.55,
         maxOutputTokens: 1024,
       },
     }),
@@ -45,7 +51,8 @@ export async function sendToGemini(
     throw new Error(msg);
   }
 
-  const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join('') || '';
+  const parts = data?.candidates?.[0]?.content?.parts as { text?: string }[] | undefined;
+  const text = parts?.map((p) => p.text).filter(Boolean).join('') || '';
   if (!text.trim()) throw new Error('Empty response from Gemini.');
   return text.trim();
 }

@@ -7,24 +7,38 @@ export type GeminiConfig = {
   voiceLang: string;
 };
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+
+/** Older model IDs saved in localStorage are upgraded automatically. */
+const RETIRED_MODELS = new Set([
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-1.5-flash-8b',
+]);
+
 export const DEFAULT_GEMINI_CONFIG: GeminiConfig = {
   apiKey: '',
-  model: 'gemini-2.0-flash',
+  model: DEFAULT_GEMINI_MODEL,
   voiceEnabled: true,
   voiceLang: 'en-IN',
 };
 
 export const GEMINI_MODEL_OPTIONS = [
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (recommended)' },
-  { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-  { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (recommended)' },
 ];
 
 export function loadGeminiConfig(): GeminiConfig {
   try {
     const raw = localStorage.getItem(GEMINI_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_GEMINI_CONFIG };
-    return { ...DEFAULT_GEMINI_CONFIG, ...JSON.parse(raw) };
+    const parsed = { ...DEFAULT_GEMINI_CONFIG, ...JSON.parse(raw) } as GeminiConfig;
+    if (RETIRED_MODELS.has(parsed.model) || !parsed.model) {
+      parsed.model = DEFAULT_GEMINI_MODEL;
+      saveGeminiConfig(parsed);
+    }
+    return parsed;
   } catch {
     return { ...DEFAULT_GEMINI_CONFIG };
   }
