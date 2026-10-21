@@ -10,6 +10,7 @@ import {
   VolumeX,
   Download,
   Loader2,
+  Wallet,
 } from 'lucide-react';
 import {
   GEMINI_MODEL_OPTIONS,
@@ -22,16 +23,20 @@ import {
 import { ChatTurn, listGeminiModels, parseAssistantReply, sendToGemini } from './geminiClient';
 import { downloadTripPdf } from './pdfExport';
 import type { PdfKind } from './geminiClient';
+import ChatFormattedText from './ChatFormattedText';
+import { registerAssistantOpener, type AssistantMode } from './assistantBridge';
+import { addExpense, queuePendingUtterance } from './expenseStore';
+import { parseExpenseUtterance } from './expenseParse';
 
-type Message = { id: string; role: 'user' | 'assistant'; text: string };
+type Message = { id: string; role: 'user' | 'assistant'; text: string; meta?: string };
 
-function speak(text: string, lang: string, onEnd?: () => void) {
+function speak(text: string, lang: string) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
+  const plain = text.replace(/\*\*/g, '');
+  const u = new SpeechSynthesisUtterance(plain);
   u.lang = lang;
   u.rate = 1;
-  u.onend = () => onEnd?.();
   window.speechSynthesis.speak(u);
 }
 
@@ -39,17 +44,20 @@ function stopSpeaking() {
   window.speechSynthesis?.cancel();
 }
 
+const TRIP_WELCOME =
+  'Hi! I’m your **Winter Himachal** trip assistant. Ask about days, places, transport, or packing. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
+
+const EXPENSE_WELCOME =
+  '**Expense mode** — say something like: “25 December dinner 2000 rupees paid by Rahul”. I’ll add it to your **Expenses** table and update each person’s total. Add traveller names on the Expenses page first.';
+
 export default function TripAssistant() {
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<AssistantMode>('trip');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [config, setConfig] = useState<GeminiConfig>(() => loadGeminiConfig());
   const [draftKey, setDraftKey] = useState('');
   const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      text: 'Hi! I’m your Winter Himachal trip assistant. Ask about days, places, transport, packing, or say “download my itinerary PDF”. Open settings to add your Gemini API key. Tap the mic to talk.',
-    },
+    { id: 'welcome', role: 'assistant', text: TRIP_WELCOME },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -61,6 +69,8 @@ export default function TripAssistant() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<ChatTurn[]>([]);
+
+  const startListenRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (settingsOpen) setDraftKey(config.apiKey);
@@ -94,7 +104,6 @@ export default function TripAssistant() {
       setModelOptions(GEMINI_MODEL_OPTIONS);
       setModelsListNote('Built-in models below. Add key and refresh for your account list.');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when opening settings
   }, [settingsOpen]);
 
   useEffect(() => {
@@ -113,12 +122,27 @@ export default function TripAssistant() {
     downloadTripPdf(kind);
     setMessages((m) => [
       ...m,
-      {
-        id: `pdf-${Date.now()}`,
-        role: 'assistant',
-        text: `Downloaded ${kind} PDF to your device.`,
-      },
+      { id: `pdf-${Date.now()}`, role: 'assistant', text: `Downloaded **${kind}** PDF to your device.` },
     ]);
+  };
+
+  const handleExpenseUtterance = async (trimmed: string): Promise<{ text: string; meta?: string }> => {
+    const online = navigator.onLine;
+    try {
+      const parsed = await parseExpenseUtterance(trimmed, config, online);
+      addExpense(parsed);
+      return {
+        text: `Recorded expense\n\n• **${parsed.dateLabel}** — ${parsed.description}\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')}\n• **Paid by:** ${parsed.paidByName}\n• **Category:** ${parsed.category}\n\nTotals updated on the **Expenses** page.`,
+      };
+    } catch (e) {
+      if (!online) {
+        queuePendingUtterance(trimmed);
+        return {
+          text: 'You’re **offline**. I saved your note and will parse it with AI when the network returns. You can also edit rows on the **Expenses** page.',
+        };
+      }
+      throw e;
+    }
   };
 
   const sendMessage = useCallback(
@@ -126,37 +150,38 @@ export default function TripAssistant() {
       const trimmed = text.trim();
       if (!trimmed || loading) return;
 
-      const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text: trimmed };
-      setMessages((m) => [...m, userMsg]);
+      setMessages((m) => [...m, { id: `u-${Date.now()}`, role: 'user', text: trimmed }]);
       setInput('');
       setLoading(true);
 
       try {
+        if (mode === 'expense') {
+          const { text: reply, meta } = await handleExpenseUtterance(trimmed);
+          setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: reply, meta }]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
         const { text: reply, modelUsed } = await sendToGemini(
           config,
           historyRef.current,
           trimmed,
           modelOptions.map((m) => m.id),
         );
-        const nextHistory: ChatTurn[] = [
+        historyRef.current = [
           ...historyRef.current,
           { role: 'user' as const, text: trimmed },
           { role: 'model' as const, text: reply },
         ].slice(-20);
-        historyRef.current = nextHistory;
 
         const { displayText, pdfKind } = parseAssistantReply(reply);
         if (pdfKind) runPdf(pdfKind);
 
-        const modelNote =
-          modelUsed !== config.model ? `\n\n(Used ${modelUsed} — primary model was busy.)` : '';
-        const assistantMsg: Message = {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          text: displayText + modelNote,
-        };
-        setMessages((m) => [...m, assistantMsg]);
+        const meta =
+          modelUsed !== config.model ? `Used ${modelUsed} (primary model was busy)` : undefined;
 
+        setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: displayText, meta }]);
         if (voiceMode && config.voiceEnabled) speak(displayText, config.voiceLang);
       } catch (e) {
         const err = e instanceof Error ? e.message : 'Something went wrong.';
@@ -165,8 +190,13 @@ export default function TripAssistant() {
         setLoading(false);
       }
     },
-    [config, loading, voiceMode, modelOptions],
+    [config, loading, voiceMode, modelOptions, mode],
   );
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    setListening(false);
+  };
 
   const startListening = () => {
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -180,9 +210,7 @@ export default function TripAssistant() {
     rec.interimResults = true;
     rec.continuous = false;
     rec.onresult = (ev) => {
-      const transcript = Array.from(ev.results)
-        .map((r) => r[0].transcript)
-        .join('');
+      const transcript = Array.from(ev.results).map((r) => r[0].transcript).join('');
       setInput(transcript);
       if (ev.results[0]?.isFinal) {
         setListening(false);
@@ -197,9 +225,29 @@ export default function TripAssistant() {
     rec.start();
   };
 
-  const stopListening = () => {
-    recognitionRef.current?.stop();
-    setListening(false);
+  startListenRef.current = startListening;
+
+  useEffect(() => {
+    registerAssistantOpener((m) => {
+      setMode(m);
+      setOpen(true);
+      setMessages([
+        {
+          id: `mode-${Date.now()}`,
+          role: 'assistant',
+          text: m === 'expense' ? EXPENSE_WELCOME : TRIP_WELCOME,
+        },
+      ]);
+      if (m === 'expense') window.setTimeout(() => startListenRef.current(), 500);
+    });
+  }, []);
+
+  const switchMode = (m: AssistantMode) => {
+    setMode(m);
+    setMessages([
+      { id: `sw-${Date.now()}`, role: 'assistant', text: m === 'expense' ? EXPENSE_WELCOME : TRIP_WELCOME },
+    ]);
+    if (m === 'expense') window.setTimeout(() => startListenRef.current(), 500);
   };
 
   const pdfButtons: { kind: PdfKind; label: string }[] = [
@@ -214,35 +262,34 @@ export default function TripAssistant() {
       <button
         type="button"
         className="assistant-fab"
-        aria-label="Trip AI assistant"
+        aria-label="AI assistant"
         onClick={() => setOpen((o) => !o)}
       >
-        {open ? <X size={22} /> : <Bot size={22} />}
+        {open ? <X size={24} /> : <Bot size={24} />}
       </button>
 
       {open && (
-        <div className="assistant-panel" role="dialog" aria-label="Trip assistant">
+        <div className="assistant-panel assistant-panel-lg" role="dialog" aria-label="AI assistant">
           <header className="assistant-head">
-            <div>
-              <strong>Trip voice assistant</strong>
-              <span>Gemini · this trip only</span>
+            <div className="assistant-head-title">
+              <span className="assistant-symbol" aria-hidden="true"><Bot size={22} /></span>
+              <div>
+                <strong>{mode === 'expense' ? 'Expense assistant' : 'Trip assistant'}</strong>
+                <span>Gemini · voice & chat</span>
+              </div>
             </div>
             <div className="assistant-head-actions">
-              <button
-                type="button"
-                aria-label={voiceMode ? 'Voice replies on' : 'Voice replies off'}
-                onClick={() => {
-                  const v = !voiceMode;
-                  setVoiceMode(v);
-                  const next = { ...config, voiceEnabled: v };
-                  setConfig(next);
-                  saveGeminiConfig(next);
-                  if (!v) stopSpeaking();
-                }}
-              >
+              <button type="button" aria-label={voiceMode ? 'Voice on' : 'Voice off'} onClick={() => {
+                const v = !voiceMode;
+                setVoiceMode(v);
+                const next = { ...config, voiceEnabled: v };
+                setConfig(next);
+                saveGeminiConfig(next);
+                if (!v) stopSpeaking();
+              }}>
                 {voiceMode ? <Volume2 size={18} /> : <VolumeX size={18} />}
               </button>
-              <button type="button" aria-label="AI settings" onClick={() => setSettingsOpen(true)}>
+              <button type="button" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
                 <Settings size={18} />
               </button>
               <button type="button" aria-label="Close" onClick={() => setOpen(false)}>
@@ -251,25 +298,36 @@ export default function TripAssistant() {
             </div>
           </header>
 
-          {!config.apiKey && (
+          <div className="assistant-mode-row">
+            <button type="button" className={mode === 'trip' ? 'on' : ''} onClick={() => switchMode('trip')}>
+              Trip Q&A
+            </button>
+            <button type="button" className={mode === 'expense' ? 'on' : ''} onClick={() => switchMode('expense')}>
+              <Wallet size={14} /> Log expense
+            </button>
+          </div>
+
+          {!config.apiKey && mode === 'trip' && (
             <div className="assistant-banner">
-              Add your <button type="button" onClick={() => setSettingsOpen(true)}>Gemini API key</button>{' '}
-              to chat. Stored only in this browser.
+              Add your <button type="button" onClick={() => setSettingsOpen(true)}>Gemini API key</button> in settings.
             </div>
           )}
 
-          <div className="assistant-pdf-row">
-            {pdfButtons.map((b) => (
-              <button key={b.kind} type="button" onClick={() => runPdf(b.kind)}>
-                <Download size={12} /> {b.label}
-              </button>
-            ))}
-          </div>
+          {mode === 'trip' && (
+            <div className="assistant-pdf-row">
+              {pdfButtons.map((b) => (
+                <button key={b.kind} type="button" onClick={() => runPdf(b.kind)}>
+                  <Download size={12} /> {b.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="assistant-messages" ref={listRef}>
             {messages.map((msg) => (
               <div key={msg.id} className={`assistant-bubble ${msg.role}`}>
-                {msg.text}
+                {msg.role === 'assistant' ? <ChatFormattedText text={msg.text} /> : msg.text}
+                {msg.meta && <div className="assistant-meta">{msg.meta}</div>}
               </div>
             ))}
             {loading && (
@@ -289,7 +347,7 @@ export default function TripAssistant() {
             <button
               type="button"
               className={`assistant-mic ${listening ? 'on' : ''}`}
-              aria-label={listening ? 'Stop listening' : 'Speak'}
+              aria-label={listening ? 'Stop' : 'Speak'}
               onClick={() => (listening ? stopListening() : startListening())}
             >
               {listening ? <MicOff size={18} /> : <Mic size={18} />}
@@ -297,7 +355,13 @@ export default function TripAssistant() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={listening ? 'Listening…' : 'Ask about your trip…'}
+              placeholder={
+                listening
+                  ? 'Listening…'
+                  : mode === 'expense'
+                    ? 'e.g. 25 Dec dinner 2000 Rahul…'
+                    : 'Ask about your trip…'
+              }
               disabled={loading}
             />
             <button type="submit" className="assistant-send" disabled={loading || !input.trim()}>
@@ -311,7 +375,7 @@ export default function TripAssistant() {
         <div className="assistant-settings-backdrop" onClick={() => setSettingsOpen(false)}>
           <div className="assistant-settings" onClick={(e) => e.stopPropagation()}>
             <h3>AI configuration</h3>
-            <p>Calls Google Gemini directly from your browser. Your key stays in localStorage on this device.</p>
+            <p>Calls Google Gemini from your browser. Key stored in localStorage only.</p>
             <label>
               Gemini API key
               <input
@@ -329,28 +393,17 @@ export default function TripAssistant() {
                 onChange={(e) => setConfig((c) => ({ ...c, model: e.target.value }))}
               >
                 {modelOptions.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                    {m.hint ? ` — ${m.hint}` : ''}
-                  </option>
+                  <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className="assistant-refresh-models"
-              disabled={modelsLoading}
-              onClick={() => refreshModels()}
-            >
-              {modelsLoading ? 'Loading models…' : 'Refresh model list from API'}
+            <button type="button" className="assistant-refresh-models" disabled={modelsLoading} onClick={() => refreshModels()}>
+              {modelsLoading ? 'Loading…' : 'Refresh model list from API'}
             </button>
             {modelsListNote && <p className="assistant-models-note">{modelsListNote}</p>}
             <label>
               Voice language
-              <select
-                value={config.voiceLang}
-                onChange={(e) => setConfig((c) => ({ ...c, voiceLang: e.target.value }))}
-              >
+              <select value={config.voiceLang} onChange={(e) => setConfig((c) => ({ ...c, voiceLang: e.target.value }))}>
                 <option value="en-IN">English (India)</option>
                 <option value="en-US">English (US)</option>
                 <option value="hi-IN">Hindi (India)</option>
@@ -365,18 +418,9 @@ export default function TripAssistant() {
               Speak replies aloud
             </label>
             <div className="assistant-settings-actions">
-              <button type="button" className="button pale" onClick={() => setSettingsOpen(false)}>
-                Cancel
-              </button>
+              <button type="button" className="button pale" onClick={() => setSettingsOpen(false)}>Cancel</button>
               <button type="button" className="button dark" onClick={saveSettings}>Save</button>
             </div>
-            <p className="assistant-settings-note">
-              Get a key at{' '}
-              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-                Google AI Studio
-              </a>
-              . Restrict the key if possible; never share it publicly.
-            </p>
           </div>
         </div>
       )}
