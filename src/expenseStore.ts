@@ -1,8 +1,13 @@
 import { days } from './tripData';
+import { memberBalanceRemaining } from './expenseLedger';
+import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
+import { registerTravellerSeeder } from './travellerSeed';
 
 export const EXPENSE_STORAGE_KEY = 'winter-himachal-expenses-v1';
 
 export type TripMember = { id: string; name: string };
+
+export type PaymentMethod = 'cash' | 'online' | 'unknown';
 
 export type ExpenseRecord = {
   id: string;
@@ -13,9 +18,32 @@ export type ExpenseRecord = {
   amountInr: number;
   paidByPersonId: string;
   paidByName: string;
+  paymentMethod: PaymentMethod;
+  /** Deducted from holder's pool (money others gave them). */
+  spentFromBalance: boolean;
+  balanceHolderPersonId?: string;
+  balanceHolderName?: string;
+  /** Who originally handed cash to the holder (optional note from chat). */
+  givenByPersonId?: string;
+  givenByName?: string;
   createdAt: number;
   updatedAt: number;
   source: 'manual' | 'voice' | 'ai' | 'offline';
+};
+
+export type FundTransfer = {
+  id: string;
+  tripDate: string;
+  dateLabel: string;
+  fromPersonId: string;
+  fromPersonName: string;
+  toPersonId: string;
+  toPersonName: string;
+  amountInr: number;
+  paymentMethod: PaymentMethod;
+  note?: string;
+  createdAt: number;
+  source: ExpenseRecord['source'];
 };
 
 export type PendingExpenseUtterance = {
@@ -27,6 +55,7 @@ export type PendingExpenseUtterance = {
 export type ExpenseStoreState = {
   members: TripMember[];
   expenses: ExpenseRecord[];
+  transfers: FundTransfer[];
   pending: PendingExpenseUtterance[];
 };
 
@@ -51,7 +80,15 @@ function newId(): string {
 }
 
 function defaultState(): ExpenseStoreState {
-  return { members: [], expenses: [], pending: [] };
+  return { members: [], expenses: [], transfers: [], pending: [] };
+}
+
+function normalizeExpense(e: ExpenseRecord): ExpenseRecord {
+  return {
+    ...e,
+    paymentMethod: e.paymentMethod || 'unknown',
+    spentFromBalance: Boolean(e.spentFromBalance),
+  };
 }
 
 function load(): ExpenseStoreState {
@@ -61,7 +98,8 @@ function load(): ExpenseStoreState {
     const parsed = JSON.parse(raw) as ExpenseStoreState;
     return {
       members: parsed.members || [],
-      expenses: parsed.expenses || [],
+      expenses: (parsed.expenses || []).map(normalizeExpense),
+      transfers: parsed.transfers || [],
       pending: parsed.pending || [],
     };
   } catch {
@@ -75,6 +113,20 @@ function save(state: ExpenseStoreState): void {
 }
 
 let state = load();
+
+function seedDefaultTravellersIfNeeded(): void {
+  let changed = false;
+  for (const name of DEFAULT_TRAVELLER_NAMES) {
+    if (state.members.length >= 10) break;
+    if (state.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) continue;
+    state = { ...state, members: [...state.members, { id: newId(), name }] };
+    changed = true;
+  }
+  if (changed) save(state);
+}
+
+registerTravellerSeeder(seedDefaultTravellersIfNeeded);
+seedDefaultTravellersIfNeeded();
 
 export function getExpenseState(): ExpenseStoreState {
   return state;
@@ -144,15 +196,55 @@ export type ExpenseInput = {
   amountInr: number;
   paidByPersonId: string;
   paidByName: string;
+  paymentMethod: PaymentMethod;
+  spentFromBalance: boolean;
+  balanceHolderPersonId?: string;
+  balanceHolderName?: string;
+  givenByPersonId?: string;
+  givenByName?: string;
   source: ExpenseRecord['source'];
 };
 
+export type FundTransferInput = {
+  tripDate: string;
+  dateLabel: string;
+  fromPersonId: string;
+  fromPersonName: string;
+  toPersonId: string;
+  toPersonName: string;
+  amountInr: number;
+  paymentMethod: PaymentMethod;
+  note?: string;
+  source: FundTransfer['source'];
+};
+
+function assertSufficientBalance(input: ExpenseInput): void {
+  if (!input.spentFromBalance) return;
+  const holderId = input.balanceHolderPersonId || input.paidByPersonId;
+  const remaining = memberBalanceRemaining(holderId, state.transfers, state.expenses);
+  const amount = Math.max(0, Math.round(input.amountInr));
+  if (amount > remaining) {
+    const holder =
+      state.members.find((m) => m.id === holderId)?.name || input.balanceHolderName || input.paidByName;
+    throw new Error(
+      `Not enough balance for ${holder} (₹${remaining.toLocaleString('en-IN')} left). Log money given first, e.g. “Rahul gave 5000 to ${holder} cash”.`,
+    );
+  }
+}
+
 export function addExpense(input: ExpenseInput): ExpenseRecord {
+  assertSufficientBalance(input);
   const now = Date.now();
+  const holderId = input.spentFromBalance ? input.balanceHolderPersonId || input.paidByPersonId : undefined;
+  const holder = holderId ? state.members.find((m) => m.id === holderId) : undefined;
   const record: ExpenseRecord = {
     id: newId(),
     ...input,
     amountInr: Math.max(0, Math.round(input.amountInr)),
+    paymentMethod: input.paymentMethod || 'unknown',
+    spentFromBalance: Boolean(input.spentFromBalance),
+    balanceHolderPersonId: holderId,
+    balanceHolderName: holder?.name || input.balanceHolderName,
     createdAt: now,
     updatedAt: now,
   };
@@ -162,14 +254,34 @@ export function addExpense(input: ExpenseInput): ExpenseRecord {
 }
 
 export function updateExpense(id: string, patch: Partial<ExpenseInput>): void {
+  const existing = state.expenses.find((e) => e.id === id);
+  if (!existing) return;
+  const merged: ExpenseInput = {
+    tripDate: patch.tripDate ?? existing.tripDate,
+    dateLabel: patch.dateLabel ?? existing.dateLabel,
+    description: patch.description ?? existing.description,
+    category: patch.category ?? existing.category,
+    amountInr: patch.amountInr !== undefined ? patch.amountInr : existing.amountInr,
+    paidByPersonId: patch.paidByPersonId ?? existing.paidByPersonId,
+    paidByName: patch.paidByName ?? existing.paidByName,
+    paymentMethod: patch.paymentMethod ?? existing.paymentMethod,
+    spentFromBalance: patch.spentFromBalance !== undefined ? patch.spentFromBalance : existing.spentFromBalance,
+    balanceHolderPersonId: patch.balanceHolderPersonId ?? existing.balanceHolderPersonId,
+    balanceHolderName: patch.balanceHolderName ?? existing.balanceHolderName,
+    givenByPersonId: patch.givenByPersonId ?? existing.givenByPersonId,
+    givenByName: patch.givenByName ?? existing.givenByName,
+    source: patch.source ?? existing.source,
+  };
+  const others = state.expenses.filter((e) => e.id !== id);
+  assertSufficientBalanceForState(merged, id, others);
   state = {
     ...state,
     expenses: state.expenses.map((e) =>
       e.id === id
         ? {
             ...e,
-            ...patch,
-            amountInr: patch.amountInr !== undefined ? Math.max(0, Math.round(patch.amountInr)) : e.amountInr,
+            ...merged,
+            amountInr: Math.max(0, Math.round(merged.amountInr)),
             updatedAt: Date.now(),
           }
         : e,
@@ -178,8 +290,42 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>): void {
   save(state);
 }
 
+function assertSufficientBalanceForState(input: ExpenseInput, editingId: string, otherExpenses: ExpenseRecord[]): void {
+  if (!input.spentFromBalance) return;
+  const holderId = input.balanceHolderPersonId || input.paidByPersonId;
+  const spentOthers = otherExpenses
+    .filter((e) => e.spentFromBalance && (e.balanceHolderPersonId || e.paidByPersonId) === holderId)
+    .reduce((s, e) => s + e.amountInr, 0);
+  const received = state.transfers.filter((t) => t.toPersonId === holderId).reduce((s, t) => s + t.amountInr, 0);
+  const remaining = received - spentOthers;
+  const amount = Math.max(0, Math.round(input.amountInr));
+  if (amount > remaining) {
+    const holder = state.members.find((m) => m.id === holderId)?.name || input.paidByName;
+    throw new Error(`Not enough balance for ${holder} (₹${remaining.toLocaleString('en-IN')} left).`);
+  }
+}
+
 export function deleteExpense(id: string): void {
   state = { ...state, expenses: state.expenses.filter((e) => e.id !== id) };
+  save(state);
+}
+
+export function addFundTransfer(input: FundTransferInput): FundTransfer {
+  const now = Date.now();
+  const record: FundTransfer = {
+    id: newId(),
+    ...input,
+    amountInr: Math.max(0, Math.round(input.amountInr)),
+    paymentMethod: input.paymentMethod || 'unknown',
+    createdAt: now,
+  };
+  state = { ...state, transfers: [...state.transfers, record].sort((a, b) => a.tripDate.localeCompare(b.tripDate)) };
+  save(state);
+  return record;
+}
+
+export function deleteFundTransfer(id: string): void {
+  state = { ...state, transfers: state.transfers.filter((t) => t.id !== id) };
   save(state);
 }
 
@@ -209,10 +355,17 @@ export function grandTotal(): number {
 }
 
 export function exportExpensesCsv(): string {
-  const header = 'Date,Description,Category,Amount (INR),Paid by';
-  const rows = state.expenses.map(
-    (e) =>
-      `"${e.dateLabel}","${e.description.replace(/"/g, '""')}","${e.category}",${e.amountInr},"${e.paidByName}"`,
+  const header =
+    'Date,Description,Category,Amount (INR),Paid by,Payment,From balance,Balance holder,Given by';
+  const rows = state.expenses.map((e) => {
+    const holder = e.spentFromBalance ? e.balanceHolderName || e.paidByName : '';
+    const givenBy = e.givenByName || '';
+    return `"${e.dateLabel}","${e.description.replace(/"/g, '""')}","${e.category}",${e.amountInr},"${e.paidByName}","${e.paymentMethod}",${e.spentFromBalance ? 'yes' : 'no'},"${holder}","${givenBy}"`;
+  });
+  const transferHeader = '\n\nTransfers\nDate,From,To,Amount (INR),Payment,Note';
+  const transferRows = state.transfers.map(
+    (t) =>
+      `"${t.dateLabel}","${t.fromPersonName}","${t.toPersonName}",${t.amountInr},"${t.paymentMethod}","${(t.note || '').replace(/"/g, '""')}"`,
   );
-  return [header, ...rows].join('\n');
+  return [header, ...rows, transferHeader, ...transferRows].join('\n');
 }

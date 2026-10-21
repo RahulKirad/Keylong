@@ -2,9 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Mic, Pencil, Trash2, Download, Users, Wifi, WifiOff, Bot } from 'lucide-react';
 import {
   ExpenseRecord,
+  FundTransfer,
+  PaymentMethod,
   addExpense,
+  addFundTransfer,
   addMember,
   deleteExpense,
+  deleteFundTransfer,
   exportExpensesCsv,
   getExpenseState,
   grandTotal,
@@ -14,14 +18,33 @@ import {
   totalsByMember,
   updateExpense,
 } from './expenseStore';
-import { parseExpenseUtterance } from './expenseParse';
+import { parseMoneyUtterance } from './expenseParse';
 import { loadGeminiConfig } from './geminiConfig';
 import { openTripAssistant } from './assistantBridge';
+import ExpenseSwipeRow from './ExpenseSwipeRow';
+import TravellerLedgerPanel from './TravellerLedgerPanel';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
-export default function ExpensesSection() {
+function paymentLabel(m: PaymentMethod): string {
+  if (m === 'cash') return 'Cash';
+  if (m === 'online') return 'Online';
+  return '—';
+}
+
+function expenseMetaLine(e: ExpenseRecord): string {
+  const parts = [paymentLabel(e.paymentMethod)];
+  if (e.spentFromBalance) parts.push(`From ${e.balanceHolderName || e.paidByName}'s balance`);
+  if (e.givenByName) parts.push(`Pool from ${e.givenByName}`);
+  return parts.filter((p) => p !== '—').join(' · ') || '—';
+}
+
+type ExpensesSectionProps = {
+  standalone?: boolean;
+};
+
+export default function ExpensesSection({ standalone = false }: ExpensesSectionProps) {
   const [snap, setSnap] = useState(getExpenseState());
   const [online, setOnline] = useState(navigator.onLine);
   const [newName, setNewName] = useState('');
@@ -49,8 +72,9 @@ export default function ExpensesSection() {
     const config = loadGeminiConfig();
     for (const p of pending) {
       try {
-        const parsed = await parseExpenseUtterance(p.rawText, config, true);
-        addExpense(parsed);
+        const parsed = await parseMoneyUtterance(p.rawText, config, true);
+        if (parsed.kind === 'give') addFundTransfer(parsed);
+        else addExpense(parsed);
         removePending(p.id);
       } catch {
         /* keep in queue */
@@ -75,18 +99,32 @@ export default function ExpensesSection() {
 
   function saveEdit() {
     if (!editing) return;
-    updateExpense(editing.id, {
-      tripDate: editing.tripDate,
-      dateLabel: editing.dateLabel,
-      description: editing.description,
-      category: editing.category,
-      amountInr: editing.amountInr,
-      paidByPersonId: editing.paidByPersonId,
-      paidByName: editing.paidByName,
-      source: editing.source,
-    });
-    setEditing(null);
-    refresh();
+    try {
+      updateExpense(editing.id, {
+        tripDate: editing.tripDate,
+        dateLabel: editing.dateLabel,
+        description: editing.description,
+        category: editing.category,
+        amountInr: editing.amountInr,
+        paidByPersonId: editing.paidByPersonId,
+        paidByName: editing.paidByName,
+        paymentMethod: editing.paymentMethod,
+        spentFromBalance: editing.spentFromBalance,
+        balanceHolderPersonId: editing.spentFromBalance
+          ? editing.balanceHolderPersonId || editing.paidByPersonId
+          : undefined,
+        balanceHolderName: editing.spentFromBalance
+          ? editing.balanceHolderName || editing.paidByName
+          : undefined,
+        givenByPersonId: editing.givenByPersonId,
+        givenByName: editing.givenByName,
+        source: editing.source,
+      });
+      setEditing(null);
+      refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not save');
+    }
   }
 
   function downloadCsv() {
@@ -97,15 +135,41 @@ export default function ExpensesSection() {
     a.click();
   }
 
+  function confirmDeleteExpense(e: ExpenseRecord) {
+    const ok = window.confirm(
+      `Delete this entry?\n\n${e.dateLabel} · ${e.description}\n${fmt(e.amountInr)} · ${e.paidByName}`,
+    );
+    if (!ok) return;
+    deleteExpense(e.id);
+    if (editing?.id === e.id) setEditing(null);
+    refresh();
+  }
+
+  function confirmDeleteTransfer(t: FundTransfer) {
+    const ok = window.confirm(
+      `Delete transfer?\n\n${t.fromPersonName} → ${t.toPersonName}\n${fmt(t.amountInr)}`,
+    );
+    if (!ok) return;
+    deleteFundTransfer(t.id);
+    refresh();
+  }
+
+  function confirmDeletePending(id: string, rawText: string) {
+    if (!window.confirm(`Remove pending note?\n\n"${rawText}"`)) return;
+    removePending(id);
+    refresh();
+  }
+
   return (
-    <section id="expenses" className="section expenses-section">
+    <section id={standalone ? undefined : 'expenses'} className="section expenses-section">
       <div className="section-head">
         <div>
           <div className="eyebrow">GROUP TRIP MONEY</div>
-          <h2>Shared expenses tally.</h2>
+          <h2>{standalone ? 'Winter Himachal Expenses' : 'Shared expenses tally.'}</h2>
           <p>
-            Add up to 10 travellers. Log spends by voice in the AI assistant or edit rows below. Data stays on this
-            device; pending items sync when you’re back online.
+            Add travellers, log who gave cash to whom, and track spends (cash, online, or from someone’s balance).
+            Use the AI assistant in <b>Log expense</b> mode — e.g. “Rahul gave 10000 to Sanket cash” or “Sanket spent
+            1500 dinner from balance cash”.
           </p>
         </div>
         <div className="expenses-status">
@@ -161,76 +225,166 @@ export default function ExpensesSection() {
         )}
       </div>
 
-      <div className="expenses-summary-grid">
-        <article className="expenses-summary-card expenses-summary-total">
-          <small>TOTAL SPENT</small>
-          <strong>{fmt(total)}</strong>
-          <span>{snap.expenses.length} entries</span>
-        </article>
-        {memberTotals.map(({ member, total: t }) => (
-          <article key={member.id} className="expenses-summary-card">
-            <small>{member.name.toUpperCase()}</small>
-            <strong>{fmt(t)}</strong>
-            <span>Paid by {member.name}</span>
-          </article>
-        ))}
-      </div>
-
-      <div className="expenses-table-wrap">
-        <table className="expenses-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Description</th>
-              <th>Category</th>
-              <th>Amount (₹)</th>
-              <th>Paid by</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {snap.expenses.length === 0 && (
-              <tr>
-                <td colSpan={6} className="expenses-empty">
-                  No expenses yet. Tap <b>Voice log expense</b> and say e.g. “25 December dinner 2000 Rahul”.
-                </td>
-              </tr>
-            )}
-            {snap.expenses.map((e) => (
-              <tr key={e.id}>
-                <td>{e.dateLabel}</td>
-                <td>{e.description}</td>
-                <td>{e.category}</td>
-                <td className="expenses-amt">{fmt(e.amountInr)}</td>
-                <td><strong>{e.paidByName}</strong></td>
-                <td className="expenses-actions">
-                  <button type="button" aria-label="Edit" onClick={() => setEditing({ ...e })}>
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Delete"
-                    onClick={() => {
-                      deleteExpense(e.id);
-                      refresh();
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
+      <div className="expenses-layout">
+        <div className="expenses-layout-main">
+          <div className="expenses-summary-grid">
+            <article className="expenses-summary-card expenses-summary-total">
+              <small>TOTAL SPENT</small>
+              <strong>{fmt(total)}</strong>
+              <span>{snap.expenses.length} entries</span>
+            </article>
+            {memberTotals.map(({ member, total: t }) => (
+              <article key={member.id} className="expenses-summary-card">
+                <small>{member.name.toUpperCase()}</small>
+                <strong>{fmt(t)}</strong>
+                <span>Paid at shop</span>
+              </article>
             ))}
-          </tbody>
-          {snap.expenses.length > 0 && (
-            <tfoot>
-              <tr>
-                <td colSpan={3}><strong>Grand total</strong></td>
-                <td className="expenses-amt"><strong>{fmt(total)}</strong></td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
+          </div>
+
+          {snap.transfers.length > 0 && (
+            <div className="expenses-transfers-block">
+              <h4>Cash given to travellers</h4>
+              <div className="expenses-table-wrap">
+                <table className="expenses-table expenses-transfers-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Amount</th>
+                      <th>Payment</th>
+                      <th aria-label="Actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snap.transfers.map((t) => (
+                      <tr key={t.id}>
+                        <td>{t.dateLabel}</td>
+                        <td><strong>{t.fromPersonName}</strong></td>
+                        <td><strong>{t.toPersonName}</strong></td>
+                        <td className="expenses-amt">{fmt(t.amountInr)}</td>
+                        <td>{paymentLabel(t.paymentMethod)}</td>
+                        <td className="expenses-actions">
+                          <button
+                            type="button"
+                            className="expense-action-delete"
+                            onClick={() => confirmDeleteTransfer(t)}
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
-        </table>
+
+          {snap.pending.length > 0 && (
+            <div className="expenses-pending-list">
+              <h4>Pending (not yet parsed)</h4>
+              <ul>
+                {snap.pending.map((p) => (
+                  <li key={p.id}>
+                    <span>{p.rawText}</span>
+                    <button type="button" className="expense-delete-text" onClick={() => confirmDeletePending(p.id, p.rawText)}>
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <p className="expenses-delete-hint">Wrong entry? Swipe left on mobile or tap <b>Delete</b> in the table.</p>
+
+          <div className="expenses-mobile-list">
+            {snap.expenses.map((e) => (
+              <ExpenseSwipeRow
+                key={e.id}
+                expense={e}
+                amountLabel={fmt(e.amountInr)}
+                metaLine={expenseMetaLine(e)}
+                onEdit={() => setEditing({ ...e })}
+                onDelete={() => confirmDeleteExpense(e)}
+              />
+            ))}
+          </div>
+
+          <div className="expenses-table-wrap">
+            <table className="expenses-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Category</th>
+                  <th>Amount</th>
+                  <th>Paid by</th>
+                  <th>Payment</th>
+                  <th>From balance</th>
+                  <th>Funded by</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {snap.expenses.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="expenses-empty">
+                      No expenses yet. Say e.g. “25 December dinner 2000 Rahul online” or “Sanket spent 800 tea from
+                      balance cash”.
+                    </td>
+                  </tr>
+                )}
+                {snap.expenses.map((e) => (
+                  <tr key={e.id}>
+                    <td>{e.dateLabel}</td>
+                    <td>{e.description}</td>
+                    <td>{e.category}</td>
+                    <td className="expenses-amt">{fmt(e.amountInr)}</td>
+                    <td><strong>{e.paidByName}</strong></td>
+                    <td>{paymentLabel(e.paymentMethod)}</td>
+                    <td>
+                      {e.spentFromBalance ? (
+                        <span className="expense-badge-balance">
+                          Yes · {e.balanceHolderName || e.paidByName}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td>{e.givenByName || '—'}</td>
+                    <td className="expenses-actions">
+                      <button type="button" className="expense-action-edit" aria-label="Edit" onClick={() => setEditing({ ...e })}>
+                        <Pencil size={14} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="expense-action-delete"
+                        aria-label="Delete"
+                        onClick={() => confirmDeleteExpense(e)}
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {snap.expenses.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}><strong>Grand total</strong></td>
+                    <td className="expenses-amt"><strong>{fmt(total)}</strong></td>
+                    <td colSpan={5} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+
+        <TravellerLedgerPanel members={snap.members} transfers={snap.transfers} expenses={snap.expenses} />
       </div>
 
       {editing && (
@@ -289,7 +443,83 @@ export default function ExpensesSection() {
                 ))}
               </select>
             </label>
+            <label>
+              Payment
+              <select
+                value={editing.paymentMethod}
+                onChange={(e) => setEditing({ ...editing, paymentMethod: e.target.value as PaymentMethod })}
+              >
+                <option value="unknown">Not specified</option>
+                <option value="cash">Cash</option>
+                <option value="online">Online</option>
+              </select>
+            </label>
+            <label className="expense-check-label">
+              <input
+                type="checkbox"
+                checked={editing.spentFromBalance}
+                onChange={(e) =>
+                  setEditing({
+                    ...editing,
+                    spentFromBalance: e.target.checked,
+                    balanceHolderPersonId: e.target.checked
+                      ? editing.balanceHolderPersonId || editing.paidByPersonId
+                      : undefined,
+                    balanceHolderName: e.target.checked
+                      ? editing.balanceHolderName || editing.paidByName
+                      : undefined,
+                  })
+                }
+              />
+              Deduct from traveller’s balance pool
+            </label>
+            {editing.spentFromBalance && (
+              <label>
+                Balance holder
+                <select
+                  value={editing.balanceHolderPersonId || editing.paidByPersonId}
+                  onChange={(e) => {
+                    const m = snap.members.find((x) => x.id === e.target.value);
+                    setEditing({
+                      ...editing,
+                      balanceHolderPersonId: e.target.value,
+                      balanceHolderName: m?.name || editing.balanceHolderName,
+                    });
+                  }}
+                >
+                  {snap.members.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label>
+              Gave money to (optional note)
+              <select
+                value={editing.givenByPersonId || ''}
+                onChange={(e) => {
+                  const m = snap.members.find((x) => x.id === e.target.value);
+                  setEditing({
+                    ...editing,
+                    givenByPersonId: m?.id,
+                    givenByName: m?.name,
+                  });
+                }}
+              >
+                <option value="">—</option>
+                {snap.members.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </label>
             <div className="assistant-settings-actions">
+              <button
+                type="button"
+                className="button expense-modal-delete"
+                onClick={() => editing && confirmDeleteExpense(editing)}
+              >
+                Delete entry
+              </button>
               <button type="button" className="button pale" onClick={() => setEditing(null)}>Cancel</button>
               <button type="button" className="button dark" onClick={saveEdit}>Save</button>
             </div>

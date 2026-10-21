@@ -11,6 +11,8 @@ import {
   Download,
   Loader2,
   Wallet,
+  ArrowRight,
+  ClipboardList,
 } from 'lucide-react';
 import {
   GEMINI_MODEL_OPTIONS,
@@ -24,11 +26,42 @@ import { ChatTurn, listGeminiModels, parseAssistantReply, sendToGemini } from '.
 import { downloadTripPdf } from './pdfExport';
 import type { PdfKind } from './geminiClient';
 import ChatFormattedText from './ChatFormattedText';
-import { registerAssistantOpener, type AssistantMode } from './assistantBridge';
-import { addExpense, queuePendingUtterance } from './expenseStore';
-import { parseExpenseUtterance } from './expenseParse';
+import {
+  navigateToAssignments,
+  navigateToExpenses,
+  registerAssistantOpener,
+  type AssistantMode,
+} from './assistantBridge';
+import { addAssignment } from './assignmentStore';
+import { parseAssignmentUtterance } from './assignmentParse';
+import { addExpense, addFundTransfer, getExpenseState, queuePendingUtterance } from './expenseStore';
+import { memberBalanceRemaining } from './expenseLedger';
+import { parseMoneyUtterance } from './expenseParse';
+import { days } from './tripData';
 
-type Message = { id: string; role: 'user' | 'assistant'; text: string; meta?: string };
+type Message = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  meta?: string;
+  expensesLink?: boolean;
+  assignmentsLink?: boolean;
+};
+
+function goToExpensesPage(closePanel = true) {
+  if (closePanel) window.dispatchEvent(new CustomEvent('assistant-close-request'));
+  window.requestAnimationFrame(() => navigateToExpenses());
+}
+
+function goToAssignmentsPage(closePanel = true) {
+  if (closePanel) window.dispatchEvent(new CustomEvent('assistant-close-request'));
+  window.requestAnimationFrame(() => navigateToAssignments());
+}
+
+function wantsExpensesNav(assistantText: string, userText?: string): boolean {
+  const blob = `${assistantText} ${userText || ''}`.toLowerCase();
+  return /expense|expenses page|spent|spending|tally|group money|who paid|cost split/.test(blob);
+}
 
 function speak(text: string, lang: string) {
   if (!window.speechSynthesis) return;
@@ -48,10 +81,29 @@ const TRIP_WELCOME =
   'Hi! I’m your **Winter Himachal** trip assistant. Ask about days, places, transport, or packing. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
 
 const EXPENSE_WELCOME =
-  '**Expense mode** — say something like: “25 December dinner 2000 rupees paid by Rahul”. I’ll add it to your **Expenses** table and update each person’s total. Add traveller names on the Expenses page first.';
+  '**Expense mode** — say e.g. “25 December dinner 2000 rupees paid by Rahul”. Travellers (Rahul, Sanket, Allen, Neeraj, Aleena, Piyu, Gautami, Vedant, Milind, Rutika) are already on the **Expenses** page.';
+
+const ASSIGNMENTS_WELCOME =
+  '**Assign tasks** — say who should do what, e.g. “Rahul is assigned to book the train tickets for 23rd” or “Sanket will confirm Kasol stay for 30 Dec”. I’ll add it to **Assignments** and highlight that day in the **itinerary**.';
+
+function welcomeForMode(m: AssistantMode): string {
+  if (m === 'expense') return EXPENSE_WELCOME;
+  if (m === 'assignments') return ASSIGNMENTS_WELCOME;
+  return TRIP_WELCOME;
+}
+
+function shouldStartMic(m: AssistantMode): boolean {
+  return m === 'expense' || m === 'assignments';
+}
 
 export default function TripAssistant() {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const close = () => setOpen(false);
+    window.addEventListener('assistant-close-request', close);
+    return () => window.removeEventListener('assistant-close-request', close);
+  }, []);
   const [mode, setMode] = useState<AssistantMode>('trip');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [config, setConfig] = useState<GeminiConfig>(() => loadGeminiConfig());
@@ -129,10 +181,38 @@ export default function TripAssistant() {
   const handleExpenseUtterance = async (trimmed: string): Promise<{ text: string; meta?: string }> => {
     const online = navigator.onLine;
     try {
-      const parsed = await parseExpenseUtterance(trimmed, config, online);
-      addExpense(parsed);
+      const parsed = await parseMoneyUtterance(trimmed, config, online);
+      if (parsed.kind === 'give') {
+        addFundTransfer(parsed);
+        const { transfers, expenses } = getExpenseState();
+        const left = memberBalanceRemaining(parsed.toPersonId, transfers, expenses);
+        const pay =
+          parsed.paymentMethod === 'cash'
+            ? 'Cash'
+            : parsed.paymentMethod === 'online'
+              ? 'Online'
+              : 'Payment not specified';
+        return {
+          text: `Recorded money given\n\n• **${parsed.fromPersonName}** → **${parsed.toPersonName}**\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')} (${pay})\n• **${parsed.toPersonName}'s balance** to spend: **₹${left.toLocaleString('en-IN')}**\n\nSee the traveller table on **Winter Himachal Expenses**.`,
+        };
+      }
+      const record = addExpense(parsed);
+      const { transfers, expenses } = getExpenseState();
+      const pay =
+        record.paymentMethod === 'cash'
+          ? 'Cash'
+          : record.paymentMethod === 'online'
+            ? 'Online'
+            : 'Not specified';
+      let balanceLine = '';
+      if (record.spentFromBalance) {
+        const holderId = record.balanceHolderPersonId || record.paidByPersonId;
+        const left = memberBalanceRemaining(holderId, transfers, expenses);
+        balanceLine = `\n• **From balance** (${record.balanceHolderName || record.paidByName}'s pool): **₹${record.amountInr.toLocaleString('en-IN')}** deducted. Remaining balance: **₹${left.toLocaleString('en-IN')}**.`;
+      }
+      const givenLine = record.givenByName ? `\n• **Originally from:** ${record.givenByName}` : '';
       return {
-        text: `Recorded expense\n\n• **${parsed.dateLabel}** — ${parsed.description}\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')}\n• **Paid by:** ${parsed.paidByName}\n• **Category:** ${parsed.category}\n\nTotals updated on the **Expenses** page.`,
+        text: `Recorded expense\n\n• **${record.dateLabel}** — ${record.description}\n• **Amount:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})\n• **Paid by:** ${record.paidByName}\n• **Category:** ${record.category}${balanceLine}${givenLine}\n\nUpdated on **Winter Himachal Expenses**.`,
       };
     } catch (e) {
       if (!online) {
@@ -143,6 +223,20 @@ export default function TripAssistant() {
       }
       throw e;
     }
+  };
+
+  const handleAssignmentUtterance = async (trimmed: string): Promise<{ text: string }> => {
+    const online = navigator.onLine;
+    const parsed = await parseAssignmentUtterance(trimmed, config, online);
+    const record = addAssignment(parsed);
+    const dayTitle =
+      record.tripDayNumber != null ? days.find((d) => d.day === record.tripDayNumber)?.title : undefined;
+    const dayLine = record.tripDayNumber != null
+      ? `\n• **Itinerary:** Day ${record.tripDayNumber}${dayTitle ? ` — ${dayTitle}` : ''} (${record.dateLabel || 'linked'})`
+      : '\n• **Itinerary:** not linked to a specific day (edit on Assignments page if needed)';
+    return {
+      text: `Task assigned\n\n• **${record.assigneeName}:** ${record.task}${dayLine}\n\nSee **Assignments** and the highlighted day on the trip **itinerary**.`,
+    };
   };
 
   const sendMessage = useCallback(
@@ -157,7 +251,21 @@ export default function TripAssistant() {
       try {
         if (mode === 'expense') {
           const { text: reply, meta } = await handleExpenseUtterance(trimmed);
-          setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: reply, meta }]);
+          setMessages((m) => [
+            ...m,
+            { id: `a-${Date.now()}`, role: 'assistant', text: reply, meta, expensesLink: true },
+          ]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
+        if (mode === 'assignments') {
+          const { text: reply } = await handleAssignmentUtterance(trimmed);
+          setMessages((m) => [
+            ...m,
+            { id: `a-${Date.now()}`, role: 'assistant', text: reply, assignmentsLink: true },
+          ]);
           if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
           setLoading(false);
           return;
@@ -181,7 +289,16 @@ export default function TripAssistant() {
         const meta =
           modelUsed !== config.model ? `Used ${modelUsed} (primary model was busy)` : undefined;
 
-        setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: displayText, meta }]);
+        setMessages((m) => [
+          ...m,
+          {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            text: displayText,
+            meta,
+            expensesLink: wantsExpensesNav(displayText, trimmed),
+          },
+        ]);
         if (voiceMode && config.voiceEnabled) speak(displayText, config.voiceLang);
       } catch (e) {
         const err = e instanceof Error ? e.message : 'Something went wrong.';
@@ -235,19 +352,17 @@ export default function TripAssistant() {
         {
           id: `mode-${Date.now()}`,
           role: 'assistant',
-          text: m === 'expense' ? EXPENSE_WELCOME : TRIP_WELCOME,
+          text: welcomeForMode(m),
         },
       ]);
-      if (m === 'expense') window.setTimeout(() => startListenRef.current(), 500);
+      if (shouldStartMic(m)) window.setTimeout(() => startListenRef.current(), 500);
     });
   }, []);
 
   const switchMode = (m: AssistantMode) => {
     setMode(m);
-    setMessages([
-      { id: `sw-${Date.now()}`, role: 'assistant', text: m === 'expense' ? EXPENSE_WELCOME : TRIP_WELCOME },
-    ]);
-    if (m === 'expense') window.setTimeout(() => startListenRef.current(), 500);
+    setMessages([{ id: `sw-${Date.now()}`, role: 'assistant', text: welcomeForMode(m) }]);
+    if (shouldStartMic(m)) window.setTimeout(() => startListenRef.current(), 500);
   };
 
   const pdfButtons: { kind: PdfKind; label: string }[] = [
@@ -274,7 +389,13 @@ export default function TripAssistant() {
             <div className="assistant-head-title">
               <span className="assistant-symbol" aria-hidden="true"><Bot size={22} /></span>
               <div>
-                <strong>{mode === 'expense' ? 'Expense assistant' : 'Trip assistant'}</strong>
+                <strong>
+                  {mode === 'expense'
+                    ? 'Expense assistant'
+                    : mode === 'assignments'
+                      ? 'Assignment assistant'
+                      : 'Trip assistant'}
+                </strong>
                 <span>Gemini · voice & chat</span>
               </div>
             </div>
@@ -305,6 +426,15 @@ export default function TripAssistant() {
             <button type="button" className={mode === 'expense' ? 'on' : ''} onClick={() => switchMode('expense')}>
               <Wallet size={14} /> Log expense
             </button>
+            <button type="button" className={mode === 'assignments' ? 'on' : ''} onClick={() => switchMode('assignments')}>
+              <ClipboardList size={14} /> Assign tasks
+            </button>
+            <button type="button" className="assistant-goto-expenses-bar" onClick={() => goToExpensesPage(true)}>
+              <Wallet size={14} /> Expenses
+            </button>
+            <button type="button" className="assistant-goto-expenses-bar" onClick={() => goToAssignmentsPage(true)}>
+              <ClipboardList size={14} /> Assignments
+            </button>
           </div>
 
           {!config.apiKey && mode === 'trip' && (
@@ -328,6 +458,16 @@ export default function TripAssistant() {
               <div key={msg.id} className={`assistant-bubble ${msg.role}`}>
                 {msg.role === 'assistant' ? <ChatFormattedText text={msg.text} /> : msg.text}
                 {msg.meta && <div className="assistant-meta">{msg.meta}</div>}
+                {msg.role === 'assistant' && msg.expensesLink && (
+                  <button type="button" className="assistant-goto-expenses" onClick={() => goToExpensesPage(true)}>
+                    Open expenses list <ArrowRight size={14} />
+                  </button>
+                )}
+                {msg.role === 'assistant' && msg.assignmentsLink && (
+                  <button type="button" className="assistant-goto-expenses" onClick={() => goToAssignmentsPage(true)}>
+                    Open assignments <ArrowRight size={14} />
+                  </button>
+                )}
               </div>
             ))}
             {loading && (
@@ -360,7 +500,9 @@ export default function TripAssistant() {
                   ? 'Listening…'
                   : mode === 'expense'
                     ? 'e.g. 25 Dec dinner 2000 Rahul…'
-                    : 'Ask about your trip…'
+                    : mode === 'assignments'
+                      ? 'e.g. Rahul is assigned to book train tickets for 23rd…'
+                      : 'Ask about your trip…'
               }
               disabled={loading}
             />
