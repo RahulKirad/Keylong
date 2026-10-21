@@ -32,6 +32,7 @@ import { FINAL_ROUTE_ITINERARY } from './finalRouteItineraryAssets';
 import BudgetCalculator from './BudgetCalculator';
 import TripMap from './TripMap';
 import TripAssistant from './TripAssistant';
+import { openTripAssistant } from './assistantBridge';
 import type { LatLng } from './routeUtils';
 import { places, days, safetyChecklist, type Place } from './tripData';
 
@@ -247,9 +248,15 @@ export default function TripPlannerPage() {
             <a href="#safety" onClick={closeNav}>
               <ShieldCheck size={15} /> Safety
             </a>
-            <a href="#assistant" onClick={closeNav}>
+            <button
+              type="button"
+              onClick={() => {
+                openTripAssistant('trip');
+                closeNav();
+              }}
+            >
               <Bot size={15} /> AI assistant
-            </a>
+            </button>
             <Link to="/expenses" onClick={closeNav}>
               <Wallet size={15} /> Expenses page
             </Link>
