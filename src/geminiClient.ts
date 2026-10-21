@@ -1,22 +1,58 @@
 import { ASSISTANT_SYSTEM_PROMPT, buildTripKnowledgeDocument } from './tripKnowledge';
 import type { GeminiConfig } from './geminiConfig';
-import { DEFAULT_GEMINI_MODEL } from './geminiConfig';
+import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_IDS } from './geminiConfig';
 
 export type ChatTurn = { role: 'user' | 'model'; text: string };
 
 const knowledge = buildTripKnowledgeDocument();
 
-export async function sendToGemini(
-  config: GeminiConfig,
+const CHAT_MODEL_BLOCK =
+  /embed|tts|live|image|imagen|aqa|computer|nano-banana|vision-only|preview-tts/i;
+
+function isChatModelId(id: string): boolean {
+  if (CHAT_MODEL_BLOCK.test(id)) return false;
+  return /gemini|argon/i.test(id);
+}
+
+export function isOverloadError(message: string, status?: number): boolean {
+  const m = message.toLowerCase();
+  return (
+    status === 429 ||
+    status === 503 ||
+    m.includes('high demand') ||
+    m.includes('resource exhausted') ||
+    m.includes('overloaded') ||
+    m.includes('try again later')
+  );
+}
+
+export async function listGeminiModels(apiKey: string): Promise<string[]> {
+  if (!apiKey.trim()) return [];
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+    headers: { 'x-goog-api-key': apiKey.trim() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error?.message || `Could not list models (${res.status})`);
+  }
+  const models = (data.models || []) as {
+    name?: string;
+    displayName?: string;
+    supportedGenerationMethods?: string[];
+  }[];
+  return models
+    .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+    .map((m) => (m.name || '').replace(/^models\//, ''))
+    .filter((id) => id && isChatModelId(id))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+async function generateWithModel(
+  apiKey: string,
+  model: string,
   history: ChatTurn[],
   userMessage: string,
 ): Promise<string> {
-  if (!config.apiKey.trim()) {
-    throw new Error('Add your Gemini API key in AI settings (gear icon).');
-  }
-
-  const model = config.model?.trim() || DEFAULT_GEMINI_MODEL;
-
   const contents = [
     ...history.map((t) => ({
       role: t.role === 'user' ? 'user' : 'model',
@@ -26,7 +62,6 @@ export async function sendToGemini(
   ];
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const apiKey = config.apiKey.trim();
 
   const res = await fetch(url, {
     method: 'POST',
@@ -48,13 +83,48 @@ export async function sendToGemini(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data?.error?.message || `Gemini API error (${res.status})`;
-    throw new Error(msg);
+    const err = new Error(msg) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
 
   const parts = data?.candidates?.[0]?.content?.parts as { text?: string }[] | undefined;
   const text = parts?.map((p) => p.text).filter(Boolean).join('') || '';
   if (!text.trim()) throw new Error('Empty response from Gemini.');
   return text.trim();
+}
+
+export async function sendToGemini(
+  config: GeminiConfig,
+  history: ChatTurn[],
+  userMessage: string,
+  fallbackModelIds: string[] = GEMINI_MODEL_IDS,
+): Promise<{ text: string; modelUsed: string }> {
+  if (!config.apiKey.trim()) {
+    throw new Error('Add your Gemini API key in AI settings (gear icon).');
+  }
+
+  const apiKey = config.apiKey.trim();
+  const primary = config.model?.trim() || DEFAULT_GEMINI_MODEL;
+  const tryOrder = [primary, ...fallbackModelIds.filter((id) => id !== primary)];
+
+  let lastError: Error & { status?: number } | null = null;
+
+  for (const model of tryOrder) {
+    try {
+      const text = await generateWithModel(apiKey, model, history, userMessage);
+      return { text, modelUsed: model };
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      lastError = err;
+      if (isOverloadError(err.message, err.status) && model !== tryOrder[tryOrder.length - 1]) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('All models failed. Try another model in settings.');
 }
 
 export const PDF_TAG_RE = /\[PDF:(itinerary|transport|safety|places|full)\]/gi;

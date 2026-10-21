@@ -14,10 +14,12 @@ import {
 import {
   GEMINI_MODEL_OPTIONS,
   GeminiConfig,
+  GeminiModelOption,
   loadGeminiConfig,
+  mergeModelOptions,
   saveGeminiConfig,
 } from './geminiConfig';
-import { ChatTurn, parseAssistantReply, sendToGemini } from './geminiClient';
+import { ChatTurn, listGeminiModels, parseAssistantReply, sendToGemini } from './geminiClient';
 import { downloadTripPdf } from './pdfExport';
 import type { PdfKind } from './geminiClient';
 
@@ -53,6 +55,9 @@ export default function TripAssistant() {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState(config.voiceEnabled);
+  const [modelOptions, setModelOptions] = useState<GeminiModelOption[]>(GEMINI_MODEL_OPTIONS);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsListNote, setModelsListNote] = useState('');
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<ChatTurn[]>([]);
@@ -60,6 +65,37 @@ export default function TripAssistant() {
   useEffect(() => {
     if (settingsOpen) setDraftKey(config.apiKey);
   }, [settingsOpen, config.apiKey]);
+
+  const refreshModels = useCallback(async (key?: string) => {
+    const apiKey = (key ?? draftKey ?? config.apiKey).trim();
+    if (!apiKey) {
+      setModelOptions(GEMINI_MODEL_OPTIONS);
+      setModelsListNote('Add API key, then refresh to load models from your account.');
+      return;
+    }
+    setModelsLoading(true);
+    setModelsListNote('');
+    try {
+      const ids = await listGeminiModels(apiKey);
+      setModelOptions(mergeModelOptions(ids));
+      setModelsListNote(ids.length ? `${ids.length} models available for your key.` : 'Using built-in list.');
+    } catch (e) {
+      setModelOptions(GEMINI_MODEL_OPTIONS);
+      setModelsListNote(e instanceof Error ? e.message : 'Could not refresh; using built-in list.');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [config.apiKey, draftKey]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    if (config.apiKey.trim()) refreshModels(config.apiKey);
+    else {
+      setModelOptions(GEMINI_MODEL_OPTIONS);
+      setModelsListNote('Built-in models below. Add key and refresh for your account list.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when opening settings
+  }, [settingsOpen]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -96,7 +132,12 @@ export default function TripAssistant() {
       setLoading(true);
 
       try {
-        const reply = await sendToGemini(config, historyRef.current, trimmed);
+        const { text: reply, modelUsed } = await sendToGemini(
+          config,
+          historyRef.current,
+          trimmed,
+          modelOptions.map((m) => m.id),
+        );
         const nextHistory: ChatTurn[] = [
           ...historyRef.current,
           { role: 'user' as const, text: trimmed },
@@ -107,10 +148,12 @@ export default function TripAssistant() {
         const { displayText, pdfKind } = parseAssistantReply(reply);
         if (pdfKind) runPdf(pdfKind);
 
+        const modelNote =
+          modelUsed !== config.model ? `\n\n(Used ${modelUsed} — primary model was busy.)` : '';
         const assistantMsg: Message = {
           id: `a-${Date.now()}`,
           role: 'assistant',
-          text: displayText,
+          text: displayText + modelNote,
         };
         setMessages((m) => [...m, assistantMsg]);
 
@@ -122,7 +165,7 @@ export default function TripAssistant() {
         setLoading(false);
       }
     },
-    [config, loading, voiceMode],
+    [config, loading, voiceMode, modelOptions],
   );
 
   const startListening = () => {
@@ -282,14 +325,26 @@ export default function TripAssistant() {
             <label>
               Model
               <select
-                value={config.model}
+                value={modelOptions.some((m) => m.id === config.model) ? config.model : modelOptions[0]?.id}
                 onChange={(e) => setConfig((c) => ({ ...c, model: e.target.value }))}
               >
-                {GEMINI_MODEL_OPTIONS.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                    {m.hint ? ` — ${m.hint}` : ''}
+                  </option>
                 ))}
               </select>
             </label>
+            <button
+              type="button"
+              className="assistant-refresh-models"
+              disabled={modelsLoading}
+              onClick={() => refreshModels()}
+            >
+              {modelsLoading ? 'Loading models…' : 'Refresh model list from API'}
+            </button>
+            {modelsListNote && <p className="assistant-models-note">{modelsListNote}</p>}
             <label>
               Voice language
               <select
