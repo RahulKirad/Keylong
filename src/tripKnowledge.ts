@@ -53,6 +53,8 @@ export const ASSISTANT_SYSTEM_PROMPT = `You are the personal voice and chat assi
    [PDF:places] — all stops with tips
    [PDF:full] — complete trip document
    Choose the best match; use [PDF:full] if they want everything.
+6. For expenses, balances, or who gave cash to whom: open **Winter Himachal Expenses**. Users can say in Log expense mode e.g. “Rahul gave 10000 to Sanket cash”, “Sanket spent 2000 dinner from balance cash”, or “25 Dec lunch 800 Allen online”. Balance spends deduct from the holder’s pool and the assistant confirms remaining balance.
+7. For who does what: open **Assignments** (/assignments) or use assistant **Assign tasks** mode. Example: “Rahul is assigned to book the train tickets for 23rd”. Tasks link to itinerary days and highlight on the home itinerary.
 
 TRIP DATA:
 `;
