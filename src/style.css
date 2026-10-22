@@ -11,3 +11,107 @@
 .nav-allen-draft{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:10px 12px;border-radius:8px;font-size:11px;letter-spacing:.3px;white-space:nowrap}.nav-allen-draft:hover{background:#ffffff12}.nav-allen-hint{opacity:.72;font-size:9px;letter-spacing:.2px}.nav-secondary button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;text-align:left;border-radius:8px}.nav-secondary button:hover{background:#ffffff0d}.allen-draft-backdrop{position:fixed;inset:0;z-index:1300;background:#06192399;display:flex;align-items:center;justify-content:center;padding:16px}.allen-draft-modal{width:min(960px,100%);max-height:min(92vh,900px);background:#f5f7f6;border-radius:16px;box-shadow:0 20px 60px #06192355;display:flex;flex-direction:column;overflow:hidden}.allen-draft-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px 12px;border-bottom:1px solid #dfe6e3;background:#fff}.allen-draft-head h2{margin:0;font-size:18px;color:#1c303a}.allen-draft-head p{margin:6px 0 0;font-size:12px;color:#5c6b70}.allen-draft-close{border:0;background:#edf0ee;width:40px;height:40px;border-radius:10px;cursor:pointer;display:grid;place-items:center;color:#1c303a}.allen-draft-tabs{display:flex;gap:8px;padding:12px 20px;background:#fafbfa;border-bottom:1px solid #edf0ee}.allen-draft-tabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid #dfe6e3;background:#fff;padding:10px;border-radius:10px;font-size:12px;cursor:pointer}.allen-draft-tabs button.on{border-color:#c9a24e;background:#fff8e8;color:#1c303a;font-weight:600}.allen-draft-actions{display:flex;flex-wrap:wrap;gap:10px;padding:12px 20px;background:#fff;border-bottom:1px solid #edf0ee}.allen-draft-viewer{flex:1;min-height:0;padding:12px 20px 20px;display:flex;flex-direction:column;gap:8px}.allen-draft-iframe{flex:1;width:100%;min-height:min(62vh,520px);border:1px solid #dfe6e3;border-radius:12px;background:#fff}.allen-draft-ppt-note{font-size:10px;line-height:1.45;color:#6a787c;margin:0}.allen-draft-ppt-note code{font-size:9px;word-break:break-all}
 @media(max-width:700px){.nav-allen-draft span .nav-allen-hint{display:block;margin-top:2px}.allen-draft-head h2{font-size:15px}.allen-draft-iframe{min-height:50vh}}
 .day-row.has-assignments{border-left:3px solid #e5c17a;background:linear-gradient(90deg,#fff9ed 0%,#fff 28%)}.day-row.has-assignments.selected{background:linear-gradient(90deg,#fff3d6 0%,#f7f9f8 35%)}.day-assignment-preview{display:block;margin-top:6px;font-size:10px;line-height:1.35;color:#8a6b2e;font-style:normal}.day-assignment-badge{min-width:22px;height:22px;border-radius:11px;background:#e5c17a;color:#1c303a;font-size:10px;font-weight:700;display:grid;place-items:center;flex-shrink:0;margin-right:4px}.day-assignments-highlight{margin:16px 0;padding:14px 16px;border-radius:12px;background:#fff8e8;border:1px solid #e5d4a8}.day-assignments-highlight h4{margin:0 0 10px;font-size:11px;letter-spacing:1px;color:#8a6b2e}.day-assignments-highlight ul{margin:0;padding-left:18px;font-size:13px;line-height:1.5}.day-assignments-highlight li{margin-bottom:6px}.day-assignments-link{display:inline-block;margin-top:10px;font-size:11px;color:#1c303a;text-decoration:underline}.assignment-traveller-grid{margin:20px 0 24px}.assignment-traveller-grid h3{margin:0 0 12px;font-size:14px}.assignment-traveller-columns{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}.assignment-traveller-col{border:1px solid #e1e7e5;border-radius:12px;background:#fafbfa;overflow:hidden}.assignment-traveller-col-head{padding:10px 12px;background:#102b3b;color:#f5f5f0;font-size:11px;font-weight:600;letter-spacing:.4px}.assignment-traveller-col ul{margin:0;padding:8px 10px 10px;list-style:none;font-size:11px;line-height:1.4}.assignment-traveller-col li{padding:8px 0;border-bottom:1px solid #edf0ee}.assignment-traveller-col li:last-child{border-bottom:0}.assignment-task-text{display:block}.assignment-task-day{display:block;margin-top:4px;font-size:9px;color:#6a787c}.assignment-empty{color:#9aa5a8;font-style:italic}.assignments-page-main .assignments-section{padding-top:28px}.assistant-mode-row{flex-wrap:wrap}.assistant-mode-row button{min-width:0;flex:1 1 auto;font-size:10px;padding:8px 6px}
+
+html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
+.site-nav-row,.site-nav-main{width:100%;max-width:100%}
+.nav-core,.nav-secondary{flex-wrap:wrap}
+.sync-status-badge{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;padding:4px 10px;border-radius:9999px;border:1px solid transparent;font-size:.78rem;font-weight:600;letter-spacing:.02em;cursor:pointer;user-select:none}
+.sync-status-badge.compact{padding:3px 8px;font-size:.72rem}
+.sync-status-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media(max-width:1100px){
+  .site-nav,.site-nav-row,.site-nav-main,.nav-core{max-width:100%;min-width:0}
+  .nav-core{flex-wrap:wrap}
+  .nav-core .nav-allen-hint{display:none}
+  .nav-allen-draft{white-space:normal}
+  .traveller-ledger-panel,.budget-table-wrap,.expenses-table-wrap,.map-layout,.map-frame{min-width:0;max-width:100%}
+}
+
+@media(max-width:700px){
+  html{overflow-x:hidden;scroll-padding-top:196px}
+  html,body,#root,.app,.site-nav,.main{width:100%}
+  body,.app,.main{max-width:100%;overflow-x:hidden}
+  .main{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
+  .site-nav-brand-row{height:auto;min-height:56px;gap:8px;padding-top:8px;padding-bottom:8px}
+  .nav-brand{min-width:0;flex-shrink:1}
+  .nav-brand strong{letter-spacing:1px}
+  .site-nav-brand-row .sync-status-badge{flex:1 1 auto;max-width:max-content;justify-content:flex-end}
+  .nav-menu-btn{display:none!important}
+  .nav-dates{display:flex;min-width:0}
+  .site-nav-main{flex-direction:column;align-items:stretch;gap:8px;width:100%}
+  .nav-route-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;gap:6px}
+  .nav-route-tabs button{min-width:0;width:100%;padding:10px 4px}
+  .nav-core{display:flex;flex-wrap:wrap;width:100%;gap:6px;margin:0}
+  .nav-core .nav-allen-draft{display:inline-flex!important}
+  .nav-core a,.nav-core .nav-allen-draft{flex:1 1 calc(33.33% - 6px);display:inline-flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;min-width:0;padding:10px 8px;font-size:11px;line-height:1.2;white-space:normal;text-align:center;background:#ffffff0d;border-radius:8px}
+  .nav-core a svg,.nav-core .nav-allen-draft svg{width:15px;height:15px;flex-shrink:0}
+  .nav-secondary,.nav-secondary.show{display:flex!important;flex-direction:row;flex-wrap:wrap;width:100%;gap:6px;margin-top:2px;padding-top:8px;border-top:1px solid #ffffff18}
+  .nav-secondary a,.nav-secondary button{flex:1 1 calc(50% - 6px);width:auto;min-width:0;justify-content:center;text-align:center;white-space:normal;padding:10px 8px;background:#ffffff0d;border-radius:8px}
+  .hero{padding:32px 16px 48px;min-height:0}
+  .hero h1{font-size:clamp(40px,12vw,52px);letter-spacing:-1px}
+  .hero-actions{width:100%}
+  .hero-actions .button{flex:1 1 140px;text-align:center}
+  .hero-meta{align-items:flex-start}
+  .hero-meta span{min-width:0}
+  .stats{padding:12px;gap:8px}
+  .stat{padding:12px 12px 11px}
+  .stat strong{font-size:20px}
+  .section{padding:28px 12px 6px}
+  .section h2{font-size:26px}
+  .map-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%}
+  .map-controls button{min-width:0;padding:9px 4px}
+  .map-layout,.map-frame,.leaflet-map,.leaflet-container{width:100%;max-width:100%}
+  .map-frame{overflow:hidden}
+  .leaflet-container{width:100%!important}
+  .map-frame,.leaflet-map{min-height:300px}
+  .map-toolbar{left:8px;right:8px}
+  .map-route-hint{margin-left:0;max-width:100%}
+  .map-legend{max-width:calc(100% - 24px)}
+  .place-panel h3{font-size:26px;overflow-wrap:anywhere}
+  .panel-bottom,.stay-row,.detail-top,.flight-top{flex-wrap:wrap}
+  .stay-row b{text-align:left}
+  .flight-card{padding:18px 14px}
+  .flight-line strong{font-size:22px}
+  .footer{margin:28px 12px 0;letter-spacing:.4px;line-height:1.8;overflow-wrap:anywhere}
+  .expenses-page-nav .site-nav-brand-row{flex-wrap:wrap}
+  .expenses-page-title{max-width:100%;font-size:10px;padding:6px 10px;white-space:normal;justify-content:center}
+  .expenses-page-subnav{height:auto!important;min-height:44px;flex-wrap:wrap!important;gap:8px;padding-top:8px!important;padding-bottom:8px!important}
+  .expenses-add-member{flex-wrap:wrap}
+  .expenses-add-member .button{flex:1 1 auto}
+  .expenses-pending-list li{align-items:flex-start;flex-wrap:wrap}
+  .assignment-list-table,.expenses-transfers-wrap{display:block;overflow:visible;border:0;background:transparent}
+  .assignment-list-table table,.expenses-transfers-wrap table,.assignment-list-table tbody,.expenses-transfers-wrap tbody,.assignment-list-table tr,.expenses-transfers-wrap tr,.assignment-list-table td,.expenses-transfers-wrap td{display:block;width:100%}
+  .assignment-list-table thead,.expenses-transfers-wrap thead{display:none}
+  .assignment-list-table tr,.expenses-transfers-wrap tr{background:#fff;border:1px solid #e1e7e5;border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .assignment-list-table td,.expenses-transfers-wrap td{border:0;padding:3px 0;text-align:left}
+  .assignment-list-table .expenses-actions,.expenses-transfers-wrap .expenses-actions{flex-direction:row;flex-wrap:wrap;margin-top:8px}
+  .assignment-list-table td::before,.expenses-transfers-wrap td::before{display:block;font-size:8px;letter-spacing:.8px;color:#8a9696;margin-bottom:2px}
+  .assignment-list-table td:nth-child(1)::before{content:'TRAVELLER'}
+  .assignment-list-table td:nth-child(2)::before{content:'ASSIGNED WORK'}
+  .assignment-list-table td:nth-child(3)::before{content:'TRIP DAY'}
+  .assignment-list-table td:nth-child(4)::before{content:'DATE'}
+  .assignment-list-table td:nth-child(5)::before{content:none}
+  .expenses-transfers-wrap td:nth-child(1)::before{content:'DATE'}
+  .expenses-transfers-wrap td:nth-child(2)::before{content:'FROM'}
+  .expenses-transfers-wrap td:nth-child(3)::before{content:'TO'}
+  .expenses-transfers-wrap td:nth-child(4)::before{content:'AMOUNT'}
+  .expenses-transfers-wrap td:nth-child(5)::before{content:'PAYMENT'}
+  .expenses-transfers-wrap td:nth-child(6)::before{content:none}
+  .traveller-ledger-panel{padding:14px 12px}
+  .budget-summary-card strong{font-size:22px}
+  .budget-category-head{padding:12px}
+  .budget-category-sub{width:100%;text-align:left}
+  .allen-draft-backdrop{padding:8px;align-items:flex-end}
+  .allen-draft-modal{max-height:92dvh;border-radius:14px 14px 0 0}
+  .allen-draft-head,.allen-draft-tabs,.allen-draft-actions,.allen-draft-viewer{padding-left:12px;padding-right:12px}
+  .allen-draft-actions .button{flex:1 1 auto}
+  .assistant-fab{right:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+  .assistant-panel,.assistant-panel-lg{left:8px;right:8px;width:auto;bottom:calc(84px + env(safe-area-inset-bottom,0px));max-height:min(72dvh,calc(100dvh - 108px))}
+}
+
+@media(max-width:380px){
+  .site-nav-brand-row .sync-status-label{display:none}
+  .site-nav-brand-row .sync-status-badge{flex:0 0 auto;padding:7px}
+  .nav-core a{font-size:8.5px}
+  .hero h1{font-size:38px}
+}

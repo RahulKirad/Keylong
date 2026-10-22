@@ -4,3 +4,4 @@ dist
 *.local
 .env
 .env.*
+data/gemini-config.json

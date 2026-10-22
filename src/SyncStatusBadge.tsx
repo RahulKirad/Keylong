@@ -44,22 +44,13 @@ export default function SyncStatusBadge({ compact = false }: { compact?: boolean
 
   return (
     <div
+      className={`sync-status-badge${compact ? ' compact' : ''}`}
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: compact ? '3px 8px' : '4px 10px',
-        borderRadius: '9999px',
         background: badgeColor,
-        border: `1px solid ${textColor}40`,
+        borderColor: `${textColor}40`,
         color: textColor,
-        fontSize: compact ? '0.72rem' : '0.78rem',
-        fontWeight: 600,
-        letterSpacing: '0.02em',
-        cursor: 'pointer',
-        userSelect: 'none',
       }}
-      title="Click to force refresh from universal cloud database"
+      title={`${label}. Tap to refresh from the cloud.`}
       onClick={handleManualSync}
     >
       <Icon
@@ -67,9 +58,10 @@ export default function SyncStatusBadge({ compact = false }: { compact?: boolean
         className={isSpinning ? 'animate-spin' : ''}
         style={{
           animation: isSpinning ? 'spin 1s linear infinite' : undefined,
+          flexShrink: 0,
         }}
       />
-      <span>{label}</span>
+      <span className="sync-status-label">{label}</span>
       {!compact && (
         <button
           type="button"

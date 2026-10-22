@@ -245,7 +245,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
           {snap.transfers.length > 0 && (
             <div className="expenses-transfers-block">
               <h4>Cash given to travellers</h4>
-              <div className="expenses-table-wrap">
+              <div className="expenses-table-wrap expenses-transfers-wrap">
                 <table className="expenses-table expenses-transfers-table">
                   <thead>
                     <tr>
