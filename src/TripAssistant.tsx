@@ -18,8 +18,10 @@ import {
   GEMINI_MODEL_OPTIONS,
   GeminiConfig,
   GeminiModelOption,
+  fetchSharedGeminiConfig,
   loadGeminiConfig,
   mergeModelOptions,
+  publishSharedGeminiConfig,
   saveGeminiConfig,
 } from './geminiConfig';
 import { ChatTurn, listGeminiModels, parseAssistantReply, sendToGemini } from './geminiClient';
@@ -128,6 +130,33 @@ export default function TripAssistant() {
     if (settingsOpen) setDraftKey(config.apiKey);
   }, [settingsOpen, config.apiKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const local = loadGeminiConfig();
+      try {
+        const shared = await fetchSharedGeminiConfig();
+        if (cancelled) return;
+        if (shared?.apiKey) {
+          const next = { ...local, apiKey: shared.apiKey, model: shared.model || local.model };
+          setConfig(next);
+          setDraftKey(next.apiKey);
+          setVoiceMode(next.voiceEnabled);
+          saveGeminiConfig(next);
+          return;
+        }
+        if (local.apiKey.trim()) {
+          await publishSharedGeminiConfig({ apiKey: local.apiKey, model: local.model });
+        }
+      } catch {
+        // Keep the key already stored in this browser if the server is unreachable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refreshModels = useCallback(async (key?: string) => {
     const apiKey = (key ?? draftKey ?? config.apiKey).trim();
     if (!apiKey) {
@@ -162,11 +191,17 @@ export default function TripAssistant() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
-  const saveSettings = () => {
+  const saveSettings = async () => {
     const next = { ...config, apiKey: draftKey.trim() };
     setConfig(next);
     saveGeminiConfig(next);
     setVoiceMode(next.voiceEnabled);
+    try {
+      await publishSharedGeminiConfig({ apiKey: next.apiKey, model: next.model });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not save the shared Gemini key');
+      return;
+    }
     setSettingsOpen(false);
   };
 
@@ -517,7 +552,7 @@ export default function TripAssistant() {
         <div className="assistant-settings-backdrop" onClick={() => setSettingsOpen(false)}>
           <div className="assistant-settings" onClick={(e) => e.stopPropagation()}>
             <h3>AI configuration</h3>
-            <p>Calls Google Gemini from your browser. Key stored in localStorage only.</p>
+            <p>One Gemini key for this site. Save it once and every browser — Chrome, Edge, and the rest — uses that same key.</p>
             <label>
               Gemini API key
               <input

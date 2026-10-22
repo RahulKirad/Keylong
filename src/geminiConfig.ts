@@ -101,3 +101,36 @@ export function loadGeminiConfig(): GeminiConfig {
 export function saveGeminiConfig(config: GeminiConfig): void {
   localStorage.setItem(GEMINI_STORAGE_KEY, JSON.stringify(config));
 }
+
+export type SharedGeminiConfig = {
+  apiKey: string;
+  model: string;
+};
+
+/** The one Gemini key saved for this site, shared by every browser. */
+export async function fetchSharedGeminiConfig(): Promise<SharedGeminiConfig | null> {
+  const res = await fetch('/api/gemini/config');
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (!data || typeof data.apiKey !== 'string') return null;
+  return {
+    apiKey: data.apiKey.trim(),
+    model: typeof data.model === 'string' && data.model.trim() ? data.model.trim() : DEFAULT_GEMINI_MODEL,
+  };
+}
+
+/** Save the Gemini key on the server so Chrome, Edge, and every other browser use it. */
+export async function publishSharedGeminiConfig(config: SharedGeminiConfig): Promise<void> {
+  const res = await fetch('/api/gemini/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: config.apiKey.trim(),
+      model: config.model.trim() || DEFAULT_GEMINI_MODEL,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || 'Could not save the shared Gemini key');
+  }
+}

@@ -352,9 +352,51 @@ app.put('/api/budget', (req, res) => {
   res.json({ success: true, budget: db.budget, version: db.version });
 });
 
+// One Gemini key for this site. Saved once, then used by every browser.
+const GEMINI_CONFIG_PATH = path.join(DATA_DIR, 'gemini-config.json');
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+
+type SharedGeminiConfig = { apiKey: string; model: string };
+
+function readSharedGemini(): SharedGeminiConfig {
+  let stored: SharedGeminiConfig = { apiKey: '', model: DEFAULT_GEMINI_MODEL };
+  if (fs.existsSync(GEMINI_CONFIG_PATH)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(GEMINI_CONFIG_PATH, 'utf-8'));
+      if (typeof parsed?.apiKey === 'string') stored.apiKey = parsed.apiKey.trim();
+      if (typeof parsed?.model === 'string' && parsed.model.trim()) stored.model = parsed.model.trim();
+    } catch (e) {
+      console.error('Could not read shared Gemini config:', e);
+    }
+  }
+  if (!stored.apiKey) stored.apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  return stored;
+}
+
+function writeSharedGemini(config: SharedGeminiConfig) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tempPath = GEMINI_CONFIG_PATH + '.tmp';
+  fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf-8');
+  fs.renameSync(tempPath, GEMINI_CONFIG_PATH);
+}
+
+app.get('/api/gemini/config', (_req, res) => {
+  const config = readSharedGemini();
+  res.json({ apiKey: config.apiKey, model: config.model, shared: Boolean(config.apiKey) });
+});
+
+app.put('/api/gemini/config', (req, res) => {
+  const current = readSharedGemini();
+  const apiKey = String(req.body?.apiKey ?? '').trim();
+  const model = String(req.body?.model ?? current.model).trim() || DEFAULT_GEMINI_MODEL;
+  writeSharedGemini({ apiKey, model });
+  res.json({ success: true, apiKey, model, shared: Boolean(apiKey) });
+});
+
 // Gemini Assistant Server-side Proxy
 app.post('/api/gemini/chat', async (req, res) => {
-  const apiKey = (process.env.GEMINI_API_KEY || (req.headers['x-gemini-key'] as string) || '').trim();
+  const shared = readSharedGemini();
+  const apiKey = (shared.apiKey || (req.headers['x-gemini-key'] as string) || '').trim();
   if (!apiKey) {
     return res.status(400).json({ error: 'No Gemini API key available on server or client' });
   }
