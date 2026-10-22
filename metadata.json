@@ -1,0 +1,7 @@
+{
+  "name": "Winter Himachal | Interactive Journey",
+  "description": "Interactive winter travel planner, budget calculator, route map, and itinerary for Spiti and Himachal Pradesh.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

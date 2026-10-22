@@ -48,9 +48,18 @@ function load(): AssignmentState {
 function save(state: AssignmentState): void {
   localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new CustomEvent('assignments-updated'));
+  window.dispatchEvent(new CustomEvent('trigger-cloud-sync'));
 }
 
 let state = load();
+
+export function setAssignmentStateFromServer(serverState: AssignmentState): void {
+  state = {
+    assignments: serverState.assignments || [],
+  };
+  localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(state));
+  window.dispatchEvent(new CustomEvent('assignments-updated'));
+}
 
 export function getAssignmentState(): AssignmentState {
   return state;

@@ -110,9 +110,21 @@ function load(): ExpenseStoreState {
 function save(state: ExpenseStoreState): void {
   localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new CustomEvent('expenses-updated'));
+  window.dispatchEvent(new CustomEvent('trigger-cloud-sync'));
 }
 
 let state = load();
+
+export function setExpenseStateFromServer(serverState: ExpenseStoreState): void {
+  state = {
+    members: serverState.members || [],
+    expenses: (serverState.expenses || []).map(normalizeExpense),
+    transfers: serverState.transfers || [],
+    pending: state.pending || [],
+  };
+  localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(state));
+  window.dispatchEvent(new CustomEvent('expenses-updated'));
+}
 
 function seedDefaultTravellersIfNeeded(): void {
   let changed = false;

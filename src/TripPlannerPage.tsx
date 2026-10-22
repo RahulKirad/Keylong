@@ -25,6 +25,7 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { assignmentsForDay, subscribeAssignments } from './assignmentStore';
+import SyncStatusBadge from './SyncStatusBadge';
 import AllenDraftModal from './AllenDraftModal';
 import FinalRouteItineraryModal from './FinalRouteItineraryModal';
 import { ALLEN_DRAFT } from './allenDraftAssets';
@@ -180,6 +181,7 @@ export default function TripPlannerPage() {
           <div className="nav-dates">
             <CalendarDays size={15} /> 23 DEC ’26 — 03 JAN ’27
           </div>
+          <SyncStatusBadge compact />
           <button type="button" className="nav-menu-btn" aria-label="Menu" onClick={() => setMobileNav(!mobileNav)}>
             {mobileNav ? <X /> : <Menu />}
           </button>

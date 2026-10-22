@@ -100,8 +100,33 @@ export async function sendToGemini(
   userMessage: string,
   fallbackModelIds: string[] = GEMINI_MODEL_IDS,
 ): Promise<{ text: string; modelUsed: string }> {
+  // First attempt server-side proxy
+  try {
+    const res = await fetch('/api/gemini/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-gemini-key': config.apiKey?.trim() || '',
+      },
+      body: JSON.stringify({
+        history,
+        userMessage,
+        model: config.model?.trim() || DEFAULT_GEMINI_MODEL,
+        systemInstruction: ASSISTANT_SYSTEM_PROMPT + knowledge,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.text) {
+        return { text: data.text, modelUsed: data.modelUsed || config.model || DEFAULT_GEMINI_MODEL };
+      }
+    }
+  } catch {
+    // Server proxy unavailable, proceed to client fallback
+  }
+
   if (!config.apiKey.trim()) {
-    throw new Error('Add your Gemini API key in AI settings (gear icon).');
+    throw new Error('Add your Gemini API key in AI settings (gear icon) or set GEMINI_API_KEY on server.');
   }
 
   const apiKey = config.apiKey.trim();

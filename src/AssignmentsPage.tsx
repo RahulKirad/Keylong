@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ClipboardList, Mountain, Mic, Bot, Pencil, Trash2 } from 'lucide-react';
 import TripAssistant from './TripAssistant';
+import SyncStatusBadge from './SyncStatusBadge';
 import {
   TripAssignment,
   allAssignments,
@@ -71,10 +72,11 @@ export default function AssignmentsPage() {
             Trip assignments
           </div>
         </div>
-        <div className="site-nav-row expenses-page-subnav">
+        <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link to="/" className="expenses-back-link">
             <ArrowLeft size={15} /> Back to trip planner
           </Link>
+          <SyncStatusBadge />
         </div>
       </header>
 

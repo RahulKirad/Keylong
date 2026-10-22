@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Mountain, Wallet } from 'lucide-react';
 import ExpensesSection from './ExpensesSection';
 import TripAssistant from './TripAssistant';
+import SyncStatusBadge from './SyncStatusBadge';
 
 const TRIP_TITLE = 'Winter Himachal | Interactive Journey';
 
@@ -32,16 +33,17 @@ export default function ExpensesPage() {
             Winter Himachal Expenses
           </div>
         </div>
-        <div className="site-nav-row expenses-page-subnav">
+        <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link to="/" className="expenses-back-link">
             <ArrowLeft size={15} /> Back to trip planner
           </Link>
+          <SyncStatusBadge />
         </div>
       </header>
       <main className="main expenses-page-main">
         <ExpensesSection standalone />
         <footer className="footer">
-          WINTER HIMACHAL EXPENSES <span>·</span> DATA STORED ON THIS DEVICE ONLY
+          WINTER HIMACHAL EXPENSES <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
         </footer>
       </main>
       <div id="assistant">

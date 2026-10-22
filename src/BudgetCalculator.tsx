@@ -56,7 +56,20 @@ export default function BudgetCalculator() {
   useEffect(() => {
     const payload: StoredBudget = { categories, travelers, tripTarget };
     localStorage.setItem(BUDGET_STORAGE_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('trigger-cloud-sync'));
   }, [categories, travelers, tripTarget]);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (e.detail?.categories) {
+        setCategories(e.detail.categories);
+        if (e.detail.travelers) setTravelers(e.detail.travelers);
+        if (e.detail.tripTarget !== undefined) setTripTarget(e.detail.tripTarget);
+      }
+    };
+    window.addEventListener('budget-updated', handler);
+    return () => window.removeEventListener('budget-updated', handler);
+  }, []);
 
   const total = useMemo(() => grandTotal(categories), [categories]);
   const perPerson = travelers > 0 ? total / travelers : total;
