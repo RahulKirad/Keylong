@@ -165,7 +165,7 @@ export default function BudgetCalculator() {
           <div className="eyebrow">PLAN YOUR SPEND</div>
           <h2>Trip budget calculator.</h2>
           <p>
-            Enter quantity and unit cost for each line (total = qty × ₹). Amounts save in this browser only.
+            Enter quantity and unit cost for each line (total = qty × ₹). Amounts sync to the cloud and share across all devices.
             Match nights, tickets, and days to your actual bookings.
           </p>
         </div>

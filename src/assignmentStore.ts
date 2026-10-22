@@ -154,9 +154,15 @@ export function updateAssignment(id: string, patch: Partial<AssignmentInput>): v
   save(state);
 }
 
-export function deleteAssignment(id: string): void {
+export async function deleteAssignment(id: string): Promise<void> {
   state = { ...state, assignments: state.assignments.filter((a) => a.id !== id) };
   save(state);
+  try {
+    const { supabase } = await import('./supabaseClient');
+    await supabase.from('trip_assignments').delete().eq('id', id);
+  } catch (e) {
+    console.warn('Failed to delete assignment from cloud:', e);
+  }
 }
 
 export function assignmentsForDay(tripDayNumber: number): TripAssignment[] {

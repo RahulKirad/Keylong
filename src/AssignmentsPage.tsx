@@ -145,7 +145,7 @@ export default function AssignmentsPage() {
           </div>
         </section>
         <footer className="footer">
-          WINTER HIMACHAL ASSIGNMENTS <span>·</span> STORED ON THIS DEVICE
+          WINTER HIMACHAL ASSIGNMENTS <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
         </footer>
       </main>
 

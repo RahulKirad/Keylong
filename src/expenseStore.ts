@@ -190,9 +190,15 @@ export function addMember(name: string): TripMember | null {
   return member;
 }
 
-export function removeMember(id: string): void {
+export async function removeMember(id: string): Promise<void> {
   state = { ...state, members: state.members.filter((m) => m.id !== id) };
   save(state);
+  try {
+    const { supabase } = await import('./supabaseClient');
+    await supabase.from('trip_members').delete().eq('id', id);
+  } catch (e) {
+    console.warn('Failed to delete member from cloud:', e);
+  }
 }
 
 export function findMemberByName(name: string): TripMember | undefined {
@@ -317,9 +323,15 @@ function assertSufficientBalanceForState(input: ExpenseInput, editingId: string,
   }
 }
 
-export function deleteExpense(id: string): void {
+export async function deleteExpense(id: string): Promise<void> {
   state = { ...state, expenses: state.expenses.filter((e) => e.id !== id) };
   save(state);
+  try {
+    const { supabase } = await import('./supabaseClient');
+    await supabase.from('trip_expenses').delete().eq('id', id);
+  } catch (e) {
+    console.warn('Failed to delete expense from cloud:', e);
+  }
 }
 
 export function addFundTransfer(input: FundTransferInput): FundTransfer {
@@ -336,9 +348,15 @@ export function addFundTransfer(input: FundTransferInput): FundTransfer {
   return record;
 }
 
-export function deleteFundTransfer(id: string): void {
+export async function deleteFundTransfer(id: string): Promise<void> {
   state = { ...state, transfers: state.transfers.filter((t) => t.id !== id) };
   save(state);
+  try {
+    const { supabase } = await import('./supabaseClient');
+    await supabase.from('trip_transfers').delete().eq('id', id);
+  } catch (e) {
+    console.warn('Failed to delete transfer from cloud:', e);
+  }
 }
 
 export function queuePendingUtterance(rawText: string): PendingExpenseUtterance {

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "updatedAt": 1792651431538,
+  "members": [
+    {
+      "id": "mem-1-rahul",
+      "name": "Rahul"
+    },
+    {
+      "id": "mem-2-sanket",
+      "name": "Sanket"
+    },
+    {
+      "id": "mem-3-allen",
+      "name": "Allen"
+    },
+    {
+      "id": "mem-4-neeraj",
+      "name": "Neeraj"
+    },
+    {
+      "id": "mem-5-aleena",
+      "name": "Aleena"
+    },
+    {
+      "id": "mem-6-piyu",
+      "name": "Piyu"
+    },
+    {
+      "id": "mem-7-gautami",
+      "name": "Gautami"
+    },
+    {
+      "id": "mem-8-vedant",
+      "name": "Vedant"
+    },
+    {
+      "id": "mem-9-milind",
+      "name": "Milind"
+    },
+    {
+      "id": "mem-10-rutika",
+      "name": "Rutika"
+    }
+  ],
+  "expenses": [],
+  "transfers": [],
+  "pending": [],
+  "assignments": [],
+  "budget": {
+    "categories": [],
+    "travelers": 10,
+    "tripTarget": 0
+  }
+}
