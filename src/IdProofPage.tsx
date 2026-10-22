@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, IdCard, Mountain, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, IdCard, Mountain, Trash2 } from 'lucide-react';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
-import { listTravellerNames } from './travellerBrief';
-import { getSelectedTraveller, setSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
+import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import {
   deleteIdProof,
   getIdProof,
@@ -15,16 +14,24 @@ import {
   type IdProof,
   type IdProofType,
 } from './idProofStore';
+import { downloadBulkIdProofPdf, listIdRoster, type IdRosterRow } from './idProofBulkPdf';
 
 const TRIP_TITLE = 'Winter Himachal | Interactive Journey';
 
+function documentLabel(proof?: IdProof): string {
+  if (!proof?.fileDataUrl) return 'No file';
+  if (proof.fileDataUrl.startsWith('data:image')) return 'Photo';
+  if (proof.fileDataUrl.startsWith('data:application/pdf')) return 'PDF';
+  return proof.fileName || 'File';
+}
+
 export default function IdProofPage() {
-  const [names, setNames] = useState<string[]>(() => listTravellerNames());
   const [focusName, setFocusName] = useState<string | null>(() => getSelectedTraveller());
   const [proof, setProof] = useState<IdProof | undefined>(() => {
     const name = getSelectedTraveller();
     return name ? getIdProof(name) : undefined;
   });
+  const [roster, setRoster] = useState<IdRosterRow[]>(() => listIdRoster());
   const [idType, setIdType] = useState<IdProofType>('aadhaar');
   const [idNumber, setIdNumber] = useState('');
   const [nameOnId, setNameOnId] = useState('');
@@ -33,6 +40,7 @@ export default function IdProofPage() {
   const [fileName, setFileName] = useState<string | undefined>();
   const [showing, setShowing] = useState(() => new URLSearchParams(window.location.search).get('show') === '1');
   const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     document.title = 'Winter Himachal — ID proof';
@@ -45,7 +53,7 @@ export default function IdProofPage() {
 
   useEffect(() => {
     const refresh = () => {
-      setNames(listTravellerNames());
+      setRoster(listIdRoster());
       if (focusName) setProof(getIdProof(focusName));
     };
     refresh();
@@ -63,12 +71,6 @@ export default function IdProofPage() {
     setFileName(saved?.fileName);
     setError('');
   }, [focusName]);
-
-  function choose(name: string) {
-    setSelectedTraveller(name);
-    setFocusName(name);
-    setShowing(false);
-  }
 
   async function onFile(file: File | undefined) {
     if (!file) return;
@@ -118,6 +120,18 @@ export default function IdProofPage() {
   }
 
   const image = fileDataUrl?.startsWith('data:image');
+  const savedCount = roster.filter((row) => row.proof).length;
+
+  function bulkDownload() {
+    setDownloading(true);
+    try {
+      downloadBulkIdProofPdf();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not build the group PDF.');
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <div className="app expenses-app">
@@ -151,19 +165,23 @@ export default function IdProofPage() {
               <div className="eyebrow">HOTEL CHECK-IN</div>
               <h2>Keep an ID on this phone.</h2>
               <p>
-                Save an Aadhaar number, passport, or a photo of the card for the selected traveller. Open it when the
-                hotel asks. It stays on this phone and is not sent to the shared trip database.
+                Save your Aadhaar or passport for check-in, then use the group list and bulk PDF for the whole party.
+                Details stay on this phone.
               </p>
             </div>
+            <button type="button" className="button dark" onClick={bulkDownload} disabled={downloading}>
+              <Download size={15} />
+              {downloading ? 'Preparing…' : 'Bulk download all IDs'}
+            </button>
           </div>
 
-          <div className="assistant-name-row expenses-focus-row">
-            <span className="assistant-name-label">{focusName ? 'ID for' : 'Pick a traveller'}</span>
-            {names.map((name) => (
-              <button key={name} type="button" className={focusName === name ? 'on' : ''} onClick={() => choose(name)}>
-                {name}
+          <div className="assistant-name-row expenses-focus-row assistant-name-locked">
+            <span className="assistant-name-label">{focusName ? 'ID for' : 'Unlock and pick your name first'}</span>
+            {focusName && (
+              <button type="button" className="on" disabled>
+                {focusName}
               </button>
-            ))}
+            )}
           </div>
 
           {focusName && (
@@ -250,6 +268,98 @@ export default function IdProofPage() {
               </aside>
             </div>
           )}
+
+          <div className="id-roster-block">
+            <div className="id-roster-head">
+              <div>
+                <h3>Everyone’s ID list</h3>
+                <p>
+                  {savedCount} of {roster.length} travellers have details saved. Bulk download includes this table plus
+                  each uploaded photo.
+                </p>
+              </div>
+              <button type="button" className="button pale" onClick={bulkDownload} disabled={downloading}>
+                <Download size={15} />
+                Download group PDF
+              </button>
+            </div>
+
+            <div className="id-roster-table-wrap">
+              <table className="id-roster-table">
+                <thead>
+                  <tr>
+                    <th>Traveller</th>
+                    <th>ID type</th>
+                    <th>Number</th>
+                    <th>Name on card</th>
+                    <th>Document</th>
+                    <th>Note</th>
+                    <th>Preview</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roster.map(({ travellerName, proof: rowProof }) => {
+                    const preview = rowProof?.fileDataUrl?.startsWith('data:image')
+                      ? rowProof.fileDataUrl
+                      : undefined;
+                    const isYou =
+                      focusName &&
+                      travellerName.trim().toLowerCase() === focusName.trim().toLowerCase();
+                    return (
+                      <tr key={travellerName} className={isYou ? 'id-roster-you' : undefined}>
+                        <td>
+                          <strong>{travellerName}</strong>
+                          {isYou ? <span className="id-roster-you-tag">You</span> : null}
+                        </td>
+                        <td>{rowProof ? idTypeLabel(rowProof.idType) : '—'}</td>
+                        <td>{rowProof?.idNumber || 'Not saved'}</td>
+                        <td>{rowProof?.nameOnId || travellerName}</td>
+                        <td>{documentLabel(rowProof)}</td>
+                        <td>{rowProof?.note || '—'}</td>
+                        <td className="id-roster-preview-cell">
+                          {preview ? (
+                            <img src={preview} alt={`${travellerName} ID`} />
+                          ) : rowProof?.fileDataUrl ? (
+                            <span>PDF on file</span>
+                          ) : (
+                            <span>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="id-roster-cards">
+              {roster.map(({ travellerName, proof: rowProof }) => {
+                const preview = rowProof?.fileDataUrl?.startsWith('data:image')
+                  ? rowProof.fileDataUrl
+                  : undefined;
+                const isYou =
+                  focusName && travellerName.trim().toLowerCase() === focusName.trim().toLowerCase();
+                return (
+                  <article key={travellerName} className={`id-roster-card${isYou ? ' on' : ''}`}>
+                    <header>
+                      <strong>{travellerName}</strong>
+                      {isYou ? <span>You</span> : null}
+                    </header>
+                    <p>
+                      <b>{rowProof ? idTypeLabel(rowProof.idType) : 'No ID yet'}</b>
+                      {rowProof?.idNumber ? ` · ${rowProof.idNumber}` : ''}
+                    </p>
+                    <p>{rowProof?.nameOnId || '—'}</p>
+                    <p className="id-roster-card-meta">
+                      {documentLabel(rowProof)}
+                      {rowProof?.note ? ` · ${rowProof.note}` : ''}
+                    </p>
+                    {preview && <img src={preview} alt={`${travellerName} ID`} />}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
         </section>
       </main>
 

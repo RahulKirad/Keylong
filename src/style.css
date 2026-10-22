@@ -142,7 +142,26 @@ html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
 .assistant-name-label{width:100%;font-size:9px;letter-spacing:.8px;color:#7c8a8d;font-weight:700}
 .assistant-name-row button{border:1px solid #d5e0e4;background:#fff;color:#1f4558;border-radius:999px;padding:6px 11px;font-size:10px;font-weight:700;cursor:pointer}
 .assistant-name-row button.on{background:#17384b;color:#fff;border-color:#17384b}
+.assistant-name-locked button.on{cursor:default;opacity:1}
+.assistant-name-locked button:disabled{opacity:1;cursor:default}
 .assistant-messages{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.assistant-new-chat{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  border:1px solid #d5e0e4;
+  background:#fff;
+  color:#1f4558;
+  border-radius:999px;
+  padding:5px 10px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.2px;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.assistant-new-chat:hover{background:#f3f7f6;border-color:#b8c9cf}
+.assistant-new-chat span{line-height:1}
 .expenses-focus-row{margin:0 0 16px;border:1px solid #edf0ee;border-radius:12px}
 
 @media(max-width:900px){
@@ -243,6 +262,8 @@ html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
 @media(max-width:380px){
   .assistant-mode-row button{flex:1 1 100%;font-size:12px}
   .assistant-head strong{font-size:12px}
+  .assistant-new-chat{padding:8px;border-radius:10px}
+  .assistant-new-chat span{display:none}
 }
 
 .app-gate{
@@ -302,7 +323,33 @@ html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
 .id-checkin-note{font-size:13px;color:#52656c}
 .id-checkin img,.id-checkin-frame{width:min(720px,100%);max-height:70vh;object-fit:contain;background:#fff;border-radius:12px;margin-top:12px}
 .id-checkin-frame{height:70vh;border:0}
-@media(max-width:700px){.id-proof-layout{grid-template-columns:1fr}}
+.id-roster-block{margin-top:28px;background:#fff;border:1px solid #e1e7e5;border-radius:14px;padding:16px}
+.id-roster-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.id-roster-head h3{margin:0 0 6px;font-size:17px;color:#1c303a}
+.id-roster-head p{margin:0;font-size:12px;color:#52656c;line-height:1.5;max-width:520px}
+.id-roster-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.id-roster-table{width:100%;border-collapse:collapse;font-size:11px;min-width:720px}
+.id-roster-table th{text-align:left;padding:10px 8px;border-bottom:1px solid #dfe6e3;color:#6a787c;font-size:9px;letter-spacing:.5px;background:#fafbfa}
+.id-roster-table td{padding:10px 8px;border-bottom:1px solid #edf0ee;vertical-align:top;color:#2b424b}
+.id-roster-you{background:#fff8e8}
+.id-roster-you-tag{display:inline-block;margin-left:6px;font-size:9px;font-weight:700;color:#8a6b2e;background:#f5e6c2;border-radius:999px;padding:2px 7px}
+.id-roster-preview-cell img{width:64px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #e1e7e5;background:#f7f8f6}
+.id-roster-preview-cell span{font-size:10px;color:#7a898c}
+.id-roster-cards{display:none;grid-template-columns:1fr;gap:10px;margin-top:4px}
+.id-roster-card{border:1px solid #e1e7e5;border-radius:12px;padding:12px;background:#fafbfa}
+.id-roster-card.on{border-color:#e5c17a;background:#fff8e8}
+.id-roster-card header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.id-roster-card header strong{font-size:14px;color:#1c303a}
+.id-roster-card header span{font-size:9px;font-weight:700;color:#8a6b2e;background:#f5e6c2;border-radius:999px;padding:2px 7px}
+.id-roster-card p{margin:0 0 4px;font-size:12px;color:#52656c;line-height:1.45}
+.id-roster-card-meta{font-size:11px!important;color:#7a898c!important}
+.id-roster-card img{width:100%;max-height:160px;object-fit:cover;border-radius:8px;margin-top:8px;border:1px solid #e1e7e5}
+@media(max-width:700px){
+  .id-proof-layout{grid-template-columns:1fr}
+  .id-roster-table-wrap{display:none}
+  .id-roster-cards{display:grid}
+  .section-head .button{width:100%}
+}
 
 @media(max-width:380px){
   .hero h1{font-size:38px}

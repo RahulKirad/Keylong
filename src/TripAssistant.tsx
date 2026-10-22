@@ -14,6 +14,7 @@ import {
   ArrowRight,
   ClipboardList,
   IdCard,
+  MessageSquarePlus,
 } from 'lucide-react';
 import {
   GEMINI_MODEL_OPTIONS,
@@ -41,28 +42,26 @@ import { parseAssignmentUtterance } from './assignmentParse';
 import { addExpense, addFundTransfer, getExpenseState, queuePendingUtterance } from './expenseStore';
 import { memberBalanceRemaining } from './expenseLedger';
 import { parseMoneyUtterance } from './expenseParse';
-import { getSelectedTraveller, setSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
+import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import { days } from './tripData';
 import {
   briefForName,
   formatPersonalReply,
-  listTravellerNames,
+  personFromQuestion,
   topicsFromQuestion,
   wantsPersonalCopy,
   type PersonalTopic,
 } from './travellerBrief';
 import { downloadPersonalPdf } from './travellerPdf';
+import {
+  clearChatThread,
+  geminiHistoryFromMessages,
+  getChatThread,
+  saveChatThread,
+  type StoredChatMessage,
+} from './chatHistoryStore';
 
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  meta?: string;
-  expensesLink?: boolean;
-  assignmentsLink?: boolean;
-  idLink?: boolean;
-  pdfTopics?: PersonalTopic[];
-};
+type Message = StoredChatMessage;
 
 const ASK_NAME =
   'Who are you on this trip? Tap your name above the message box. The chat starts after that.';
@@ -109,8 +108,10 @@ const ASSIGNMENTS_WELCOME =
 
 function welcomeForMode(m: AssistantMode, name: string): string {
   const expense = `**Log expense** is for **${name}**. Say the date, what was bought, and the amount — for example “25 Dec dinner 2000 cash”. I will record it as paid by **${name}**. To hand someone cash, say “gave 5000 cash to another traveller”.`;
-  const body = m === 'expense' ? expense : m === 'assignments' ? ASSIGNMENTS_WELCOME : TRIP_WELCOME;
-  return `Hi **${name}**. I will use your records when you ask about tasks, expenses, or spending.\n\n${body}`;
+  const trip =
+    'Ask about days, places, packing, **your** tasks and spending, or anyone else’s work — e.g. “What is Sanket assigned?” or “Show Allen’s expenses”.';
+  const body = m === 'expense' ? expense : m === 'assignments' ? ASSIGNMENTS_WELCOME : trip;
+  return `Hi **${name}**. This login stays on your name.\n\n${body}`;
 }
 
 function openingMessages(mode: AssistantMode, name: string | null): Message[] {
@@ -127,6 +128,19 @@ function shouldStartMic(m: AssistantMode): boolean {
   return m === 'expense' || m === 'assignments';
 }
 
+function initialMessagesFor(mode: AssistantMode, name: string | null): Message[] {
+  const saved = getChatThread(name, mode);
+  if (saved?.messages?.length) return saved.messages;
+  return openingMessages(mode, name);
+}
+
+function initialGeminiHistory(mode: AssistantMode, name: string | null): ChatTurn[] {
+  const saved = getChatThread(name, mode);
+  if (saved?.geminiHistory?.length) return saved.geminiHistory;
+  if (saved?.messages?.length) return geminiHistoryFromMessages(saved.messages);
+  return [];
+}
+
 export default function TripAssistant() {
   const [open, setOpen] = useState(false);
 
@@ -140,10 +154,12 @@ export default function TripAssistant() {
   const [config, setConfig] = useState<GeminiConfig>(() => loadGeminiConfig());
   const [draftKey, setDraftKey] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(() => getSelectedTraveller());
-  const [names, setNames] = useState<string[]>(() => listTravellerNames());
   const offeredTopicsRef = useRef<PersonalTopic[]>([]);
+  const offeredSubjectRef = useRef<string | null>(getSelectedTraveller());
   const selectedNameRef = useRef<string | null>(getSelectedTraveller());
-  const [messages, setMessages] = useState<Message[]>(() => openingMessages('trip', getSelectedTraveller()));
+  const [messages, setMessages] = useState<Message[]>(() =>
+    initialMessagesFor('trip', getSelectedTraveller()),
+  );
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -153,43 +169,64 @@ export default function TripAssistant() {
   const [modelsListNote, setModelsListNote] = useState('');
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const historyRef = useRef<ChatTurn[]>([]);
+  const historyRef = useRef<ChatTurn[]>(initialGeminiHistory('trip', getSelectedTraveller()));
+  const skipPersistRef = useRef(false);
 
   const startListenRef = useRef<() => void>(() => {});
+
+  const loadThread = useCallback((name: string | null, nextMode: AssistantMode) => {
+    skipPersistRef.current = true;
+    const saved = getChatThread(name, nextMode);
+    if (saved?.messages?.length) {
+      setMessages(saved.messages);
+      historyRef.current = saved.geminiHistory?.length
+        ? saved.geminiHistory
+        : geminiHistoryFromMessages(saved.messages);
+    } else {
+      setMessages(openingMessages(nextMode, name));
+      historyRef.current = [];
+    }
+    window.setTimeout(() => {
+      skipPersistRef.current = false;
+    }, 0);
+  }, []);
 
   useEffect(() => {
     selectedNameRef.current = selectedName;
   }, [selectedName]);
 
   useEffect(() => {
-    const refreshNames = () => setNames(listTravellerNames());
-    window.addEventListener('expenses-updated', refreshNames);
-    return () => window.removeEventListener('expenses-updated', refreshNames);
-  }, []);
+    if (skipPersistRef.current || !selectedName) return;
+    saveChatThread(selectedName, mode, messages, historyRef.current);
+  }, [messages, mode, selectedName]);
 
   const applySelectedName = (name: string) => {
     if (selectedNameRef.current === name) return;
     const starting = !selectedNameRef.current;
     setSelectedName(name);
     selectedNameRef.current = name;
+    offeredSubjectRef.current = name;
     if (starting) {
-      setMessages(openingMessages(mode, name));
+      loadThread(name, mode);
       if (shouldStartMic(mode)) window.setTimeout(() => startListenRef.current(), 500);
       return;
     }
-    setMessages((current) => [
-      ...current,
-      {
-        id: `hello-${Date.now()}`,
-        role: 'assistant',
-        text: `Hi **${name}**. I'll use your records from here.`,
-      },
-    ]);
+    loadThread(name, mode);
   };
 
-  const chooseName = (name: string) => {
-    if (selectedNameRef.current === name) return;
-    setSelectedTraveller(name);
+  const startNewChat = () => {
+    const name = selectedNameRef.current;
+    clearChatThread(name, mode);
+    skipPersistRef.current = true;
+    historyRef.current = [];
+    offeredTopicsRef.current = [];
+    offeredSubjectRef.current = name;
+    setMessages(openingMessages(mode, name));
+    setInput('');
+    window.setTimeout(() => {
+      skipPersistRef.current = false;
+      if (name) saveChatThread(name, mode, openingMessages(mode, name), []);
+    }, 0);
   };
 
   useEffect(
@@ -371,25 +408,31 @@ export default function TripAssistant() {
         }
 
         if (wantsPersonalCopy(trimmed) && offeredTopicsRef.current.length) {
+          const subject = offeredSubjectRef.current || person;
           const pdfTopics = [...new Set([...offeredTopicsRef.current, 'spending' as const, 'expenses' as const])];
-          downloadPersonalPdf(person, pdfTopics);
+          downloadPersonalPdf(subject, pdfTopics);
           setMessages((m) => [
             ...m,
             {
               id: `pdf-${Date.now()}`,
               role: 'assistant',
-              text: `Downloaded **${person}**'s PDF. It includes the total spent, any balance left, and the tables for what you asked about.`,
+              text: `Downloaded **${subject}**'s PDF. It includes the total spent, any balance left, and the tables for what you asked about.`,
             },
           ]);
           return;
         }
 
-        const topics = topicsFromQuestion(trimmed);
+        const askedTopics = topicsFromQuestion(trimmed);
+        const subject = personFromQuestion(trimmed, person);
         const loggingRecord = /\b(is assigned|will |should |paid by|rupees|rs\.?\s*\d|\d+\s*(rupee|inr))\b/i.test(trimmed);
         const expenseEntry = mode === 'expense' && /\d/.test(trimmed) && !trimmed.includes('?') && !/^(what|show|tell|how|list|do i|did i)\b/i.test(trimmed);
-        if (topics && !loggingRecord && !expenseEntry) {
+        if (askedTopics && !loggingRecord && !expenseEntry) {
+          const aboutSelf = subject.toLowerCase() === person.toLowerCase();
+          let topics = aboutSelf ? askedTopics : askedTopics.filter((topic) => topic !== 'identity');
+          if (!topics.length) topics = ['tasks'];
           offeredTopicsRef.current = [...new Set([...offeredTopicsRef.current, ...topics])];
-          const reply = formatPersonalReply(briefForName(person), topics);
+          offeredSubjectRef.current = subject;
+          const reply = formatPersonalReply(briefForName(subject), topics, person);
           setMessages((m) => [
             ...m,
             {
@@ -397,9 +440,9 @@ export default function TripAssistant() {
               role: 'assistant',
               text: reply,
               pdfTopics: [...offeredTopicsRef.current],
-              expensesLink: topics.includes('expenses') || topics.includes('spending'),
-              assignmentsLink: topics.includes('tasks'),
-              idLink: topics.includes('identity'),
+              expensesLink: aboutSelf && (topics.includes('expenses') || topics.includes('spending')),
+              assignmentsLink: aboutSelf && topics.includes('tasks'),
+              idLink: aboutSelf && topics.includes('identity'),
             },
           ]);
           if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
@@ -505,14 +548,16 @@ export default function TripAssistant() {
     registerAssistantOpener((m) => {
       setMode(m);
       setOpen(true);
-      setMessages(openingMessages(m, selectedNameRef.current));
+      loadThread(selectedNameRef.current, m);
       if (selectedNameRef.current && shouldStartMic(m)) window.setTimeout(() => startListenRef.current(), 500);
     });
-  }, []);
+  }, [loadThread]);
 
   const switchMode = (m: AssistantMode) => {
+    if (m === mode) return;
+    if (selectedName) saveChatThread(selectedName, mode, messages, historyRef.current);
     setMode(m);
-    setMessages(openingMessages(m, selectedName));
+    loadThread(selectedName, m);
     if (selectedName && shouldStartMic(m)) window.setTimeout(() => startListenRef.current(), 500);
   };
 
@@ -561,6 +606,16 @@ export default function TripAssistant() {
               </div>
             </div>
             <div className="assistant-head-actions">
+              <button
+                type="button"
+                className="assistant-new-chat"
+                aria-label="Start a new chat"
+                title="Start a new chat"
+                onClick={startNewChat}
+              >
+                <MessageSquarePlus size={18} />
+                <span>New chat</span>
+              </button>
               <button type="button" aria-label={voiceMode ? 'Voice on' : 'Voice off'} onClick={() => {
                 const v = !voiceMode;
                 setVoiceMode(v);
@@ -632,8 +687,9 @@ export default function TripAssistant() {
                     type="button"
                     className="assistant-goto-expenses"
                     onClick={() => {
+                      const subject = offeredSubjectRef.current || selectedName;
                       const topics = [...new Set([...(msg.pdfTopics || []), 'spending' as const, 'expenses' as const])];
-                      downloadPersonalPdf(selectedName, topics);
+                      downloadPersonalPdf(subject, topics);
                     }}
                   >
                     <Download size={14} /> Download my PDF
@@ -659,18 +715,15 @@ export default function TripAssistant() {
           </div>
 
           <div className="assistant-footer">
-            <div className="assistant-name-row">
-              <span className="assistant-name-label">{selectedName ? 'You are' : 'Tap your name to start'}</span>
-              {names.map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  className={selectedName === name ? 'on' : ''}
-                  onClick={() => chooseName(name)}
-                >
-                  {name}
+            <div className="assistant-name-row assistant-name-locked">
+              <span className="assistant-name-label">
+                {selectedName ? 'Signed in as' : 'Unlock the trip and pick your name first'}
+              </span>
+              {selectedName && (
+                <button type="button" className="on" disabled>
+                  {selectedName}
                 </button>
-              ))}
+              )}
             </div>
 
             <form

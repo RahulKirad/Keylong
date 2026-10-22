@@ -20,8 +20,7 @@ import {
 import { parseMoneyUtterance } from './expenseParse';
 import { loadGeminiConfig } from './geminiConfig';
 import { openTripAssistant } from './assistantBridge';
-import { getSelectedTraveller, setSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
-import { listTravellerNames } from './travellerBrief';
+import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import ExpenseSwipeRow from './ExpenseSwipeRow';
 import TravellerLedgerPanel from './TravellerLedgerPanel';
 
@@ -56,18 +55,11 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
   const [editing, setEditing] = useState<ExpenseRecord | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [focusName, setFocusName] = useState<string | null>(() => getSelectedTraveller());
-  const [names, setNames] = useState<string[]>(() => listTravellerNames());
 
   const refresh = () => setSnap(getExpenseState());
 
   useEffect(() => subscribeExpenses(refresh), []);
   useEffect(() => subscribeSelectedTraveller(setFocusName), []);
-  useEffect(() => {
-    const refreshNames = () => setNames(listTravellerNames());
-    refreshNames();
-    window.addEventListener('expenses-updated', refreshNames);
-    return () => window.removeEventListener('expenses-updated', refreshNames);
-  }, []);
   useEffect(() => {
     const on = () => setOnline(true);
     const off = () => setOnline(false);
@@ -215,18 +207,13 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
         </div>
       </div>
 
-      <div className="assistant-name-row expenses-focus-row">
-        <span className="assistant-name-label">{focusName ? 'Showing' : 'Pick a traveller'}</span>
-        {names.map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={focusName && samePerson(focusName, name) ? 'on' : ''}
-            onClick={() => setSelectedTraveller(name)}
-          >
-            {name}
+      <div className="assistant-name-row expenses-focus-row assistant-name-locked">
+        <span className="assistant-name-label">{focusName ? 'Showing your money' : 'Unlock and pick your name first'}</span>
+        {focusName && (
+          <button type="button" className="on" disabled>
+            {focusName}
           </button>
-        ))}
+        )}
       </div>
 
       <div className="expenses-toolbar">
