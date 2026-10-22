@@ -33,7 +33,7 @@ export default function SyncStatusBadge({ compact = false }: { compact?: boolean
   } else if (status.status === 'offline') {
     badgeColor = 'rgba(245, 158, 11, 0.15)';
     textColor = '#f59e0b';
-    label = 'Offline (cached locally)';
+    label = status.message?.includes('VITE_SUPABASE') ? 'Local only' : 'Offline (cached locally)';
     Icon = WifiOff;
   } else if (status.status === 'error') {
     badgeColor = 'rgba(239, 68, 68, 0.15)';
@@ -50,7 +50,7 @@ export default function SyncStatusBadge({ compact = false }: { compact?: boolean
         borderColor: `${textColor}40`,
         color: textColor,
       }}
-      title={`${label}. Tap to refresh from the cloud.`}
+      title={status.message || `${label}. Tap to refresh from the cloud.`}
       onClick={handleManualSync}
     >
       <Icon

@@ -220,25 +220,85 @@ function normalizePaymentMethod(v: string | undefined): PaymentMethod {
   return 'unknown';
 }
 
+function namesMentioned(text: string, except: string) {
+  const lower = text.toLowerCase();
+  return getExpenseState().members.filter((member) => {
+    const name = member.name.toLowerCase();
+    return name !== except.toLowerCase() && lower.includes(name);
+  });
+}
+
+/** Log expense mode records spends and outgoing cash against the selected traveller. */
+function attributeToTraveller(
+  action: ParsedMoneyAction,
+  actingAs: string | undefined,
+  text: string,
+): ParsedMoneyAction {
+  if (!actingAs?.trim()) return action;
+  const actor = resolveMember(actingAs);
+  if (!actor) return action;
+  const others = namesMentioned(text, actor.name);
+
+  if (action.kind === 'give') {
+    const received =
+      /\b(gave|give|handed|sent|transferred)\b.{0,30}\b(me|myself)\b/i.test(text) ||
+      /\b(to me|for me)\b/i.test(text);
+    const fromOther = others.find((member) =>
+      new RegExp(`\\b${member.name}\\b.{0,24}\\b(gave|give|handed|sent|transferred)\\b`, 'i').test(text),
+    );
+    if (received && fromOther) {
+      return {
+        ...action,
+        fromPersonId: fromOther.id,
+        fromPersonName: fromOther.name,
+        toPersonId: actor.id,
+        toPersonName: actor.name,
+      };
+    }
+    const recipient = others.find((member) => member.id !== actor.id);
+    return {
+      ...action,
+      fromPersonId: actor.id,
+      fromPersonName: actor.name,
+      toPersonId: recipient?.id || action.toPersonId,
+      toPersonName: recipient?.name || action.toPersonName,
+    };
+  }
+
+  return {
+    ...action,
+    paidByPersonId: actor.id,
+    paidByName: actor.name,
+    ...(action.spentFromBalance
+      ? { balanceHolderPersonId: actor.id, balanceHolderName: actor.name }
+      : {}),
+  };
+}
+
 export async function parseMoneyUtterance(
   text: string,
   config: GeminiConfig,
   online: boolean,
+  actingAs?: string,
 ): Promise<ParsedMoneyAction> {
+  const finish = (action: ParsedMoneyAction) => attributeToTraveller(action, actingAs, text);
   const offline = offlineParse(text);
-  if (!online && offline) return offline;
+  if (!online && offline) return finish(offline);
   if (!online) {
     throw new Error('Offline: try "Rahul gave 5000 to Sanket cash" or "25 Dec dinner 2000 Rahul".');
   }
   if (!config.apiKey.trim()) {
-    if (offline) return offline;
+    if (offline) return finish(offline);
     throw new Error('Add Gemini API key in settings to parse complex entries.');
   }
 
   const { members } = getExpenseState();
   const memberNames = members.map((m) => m.name).join(', ') || '(none yet — infer name from speech)';
   const dayRef = days.map((d) => `Day ${d.day} ${d.date}`).join('; ');
-  const prompt = `${MONEY_JSON_INSTRUCTION.replace('{{MEMBERS}}', memberNames).replace('{{DAYS}}', dayRef)}\n\nUser said: "${text}"`;
+  const speaker = actingAs
+    ? `\nThe traveller logging this is ${actingAs}. Record purchases as paid by ${actingAs}. Record "gave X to someone" as from ${actingAs}.`
+    : '';
+  const prompt = `${MONEY_JSON_INSTRUCTION.replace('{{MEMBERS}}', memberNames).replace('{{DAYS}}', dayRef)}${speaker}\n\nUser said: "${text}"`;
 
   try {
     const raw = await callGeminiExpenseJson(config, prompt);
@@ -248,11 +308,11 @@ export async function parseMoneyUtterance(
     const action = parsed.action === 'give' ? 'give' : 'expense';
 
     if (action === 'give') {
-      const from = resolveMember(String(parsed.fromPersonName || ''));
+      const from = resolveMember(actingAs || String(parsed.fromPersonName || ''));
       const to = resolveMember(String(parsed.toPersonName || ''));
       if (!from || !to) throw new Error('Could not match traveller names for transfer.');
       const dateLabel = String(parsed.dateLabel || '25 Dec');
-      return {
+      return finish({
         kind: 'give',
         tripDate: String(parsed.tripDate || '2026-12-25'),
         dateLabel,
@@ -264,11 +324,11 @@ export async function parseMoneyUtterance(
         paymentMethod: normalizePaymentMethod(String(parsed.paymentMethod || '')),
         note: parsed.note ? String(parsed.note) : undefined,
         source: 'ai',
-      };
+      });
     }
 
-    const paidByName = String(parsed.paidByName || 'Unassigned');
-    let member = resolveMember(paidByName);
+    const paidByName = String(parsed.paidByName || actingAs || 'Unassigned');
+    let member = resolveMember(actingAs || paidByName);
     if (!member) throw new Error('Add trip members on the Expenses page first.');
 
     const spentFromBalance = Boolean(parsed.spentFromBalance);
@@ -287,7 +347,7 @@ export async function parseMoneyUtterance(
       }
     }
 
-    return {
+    return finish({
       kind: 'expense',
       tripDate: String(parsed.tripDate || '2026-12-25'),
       dateLabel: String(parsed.dateLabel || '25 Dec'),
@@ -303,9 +363,9 @@ export async function parseMoneyUtterance(
       givenByPersonId,
       givenByName,
       source: 'ai',
-    };
+    });
   } catch {
-    if (offline) return offline;
+    if (offline) return finish(offline);
     throw new Error(
       'Could not understand. Try: "Rahul gave 10000 to Sanket cash" or "Sanket spent 800 dinner from balance cash".',
     );

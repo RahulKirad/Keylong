@@ -1,6 +1,6 @@
 import { ASSISTANT_SYSTEM_PROMPT, buildTripKnowledgeDocument } from './tripKnowledge';
 import type { GeminiConfig } from './geminiConfig';
-import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_IDS } from './geminiConfig';
+import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_IDS, isLocalDevHost } from './geminiConfig';
 
 export type ChatTurn = { role: 'user' | 'model'; text: string };
 
@@ -100,29 +100,31 @@ export async function sendToGemini(
   userMessage: string,
   fallbackModelIds: string[] = GEMINI_MODEL_IDS,
 ): Promise<{ text: string; modelUsed: string }> {
-  // First attempt server-side proxy
-  try {
-    const res = await fetch('/api/gemini/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-key': config.apiKey?.trim() || '',
-      },
-      body: JSON.stringify({
-        history,
-        userMessage,
-        model: config.model?.trim() || DEFAULT_GEMINI_MODEL,
-        systemInstruction: ASSISTANT_SYSTEM_PROMPT + knowledge,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.text) {
-        return { text: data.text, modelUsed: data.modelUsed || config.model || DEFAULT_GEMINI_MODEL };
+  // The local Express proxy exists only for npm run dev. The published site calls Gemini directly.
+  if (isLocalDevHost()) {
+    try {
+      const res = await fetch('/api/gemini/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-key': config.apiKey?.trim() || '',
+        },
+        body: JSON.stringify({
+          history,
+          userMessage,
+          model: config.model?.trim() || DEFAULT_GEMINI_MODEL,
+          systemInstruction: ASSISTANT_SYSTEM_PROMPT + knowledge,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.text) {
+          return { text: data.text, modelUsed: data.modelUsed || config.model || DEFAULT_GEMINI_MODEL };
+        }
       }
+    } catch {
+      // Server proxy unavailable, proceed to client fallback
     }
-  } catch {
-    // Server proxy unavailable, proceed to client fallback
   }
 
   if (!config.apiKey.trim()) {

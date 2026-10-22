@@ -1,6 +1,7 @@
 import React from 'react';
 import type { TripAssignment } from './assignmentStore';
 import type { TripMember } from './expenseStore';
+import { collapseMembers } from './memberIdentity';
 
 type Props = {
   members: TripMember[];
@@ -8,14 +9,26 @@ type Props = {
 };
 
 export default function TravellerAssignmentGrid({ members, assignments }: Props) {
-  if (!members.length) return null;
+  const columns = collapseMembers(members).members;
+  if (!columns.length) return null;
 
   return (
     <div className="assignment-traveller-grid">
       <h3>By traveller</h3>
       <div className="assignment-traveller-columns">
-        {members.map((m) => {
-          const tasks = assignments.filter((a) => a.assigneePersonId === m.id);
+        {columns.map((m) => {
+          const nameKey = m.name.trim().toLowerCase();
+          const ids = new Set(
+            members.filter((member) => member.name.trim().toLowerCase() === nameKey).map((member) => member.id),
+          );
+          const seen = new Set<string>();
+          const tasks = assignments.filter((a) => {
+            const matches =
+              ids.has(a.assigneePersonId) || (a.assigneeName || '').trim().toLowerCase() === nameKey;
+            if (!matches || seen.has(a.id)) return false;
+            seen.add(a.id);
+            return true;
+          });
           return (
             <div key={m.id} className="assignment-traveller-col">
               <div className="assignment-traveller-col-head">{m.name}</div>
