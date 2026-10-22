@@ -523,11 +523,21 @@ export default function TripAssistant() {
     { kind: 'full', label: 'Full pack' },
   ];
 
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    const narrow = window.matchMedia('(max-width: 900px)').matches;
+    if (narrow) document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [open]);
+
   return (
     <>
       <button
         type="button"
-        className="assistant-fab"
+        className={`assistant-fab${open ? ' assistant-fab-open' : ''}`}
         aria-label="AI assistant"
         onClick={() => setOpen((o) => !o)}
       >
@@ -535,7 +545,7 @@ export default function TripAssistant() {
       </button>
 
       {open && (
-        <div className="assistant-panel assistant-panel-lg" role="dialog" aria-label="AI assistant">
+        <div className="assistant-panel assistant-panel-lg" role="dialog" aria-modal="true" aria-label="AI assistant">
           <header className="assistant-head">
             <div className="assistant-head-title">
               <span className="assistant-symbol" aria-hidden="true"><Bot size={22} /></span>
@@ -648,56 +658,58 @@ export default function TripAssistant() {
             )}
           </div>
 
-          <div className="assistant-name-row">
-            <span className="assistant-name-label">{selectedName ? 'You are' : 'Tap your name to start'}</span>
-            {names.map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={selectedName === name ? 'on' : ''}
-                onClick={() => chooseName(name)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
+          <div className="assistant-footer">
+            <div className="assistant-name-row">
+              <span className="assistant-name-label">{selectedName ? 'You are' : 'Tap your name to start'}</span>
+              {names.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className={selectedName === name ? 'on' : ''}
+                  onClick={() => chooseName(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
 
-          <form
-            className="assistant-compose"
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendMessage(input);
-            }}
-          >
-            <button
-              type="button"
-              className={`assistant-mic ${listening ? 'on' : ''}`}
-              aria-label={listening ? 'Stop' : 'Speak'}
-              disabled={!selectedName}
-              onClick={() => (listening ? stopListening() : startListening())}
+            <form
+              className="assistant-compose"
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendMessage(input);
+              }}
             >
-              {listening ? <MicOff size={18} /> : <Mic size={18} />}
-            </button>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                listening
-                  ? 'Listening…'
-                  : !selectedName
-                    ? 'Chat starts after you pick a name'
-                  : mode === 'expense'
-                    ? `Log an expense for ${selectedName}…`
-                    : mode === 'assignments'
-                      ? 'e.g. Rahul is assigned to book train tickets for 23rd…'
-                      : `Ask about your tasks or spending, ${selectedName}…`
-              }
-              disabled={loading || !selectedName}
-            />
-            <button type="submit" className="assistant-send" disabled={loading || !input.trim()}>
-              <Send size={16} />
-            </button>
-          </form>
+              <button
+                type="button"
+                className={`assistant-mic ${listening ? 'on' : ''}`}
+                aria-label={listening ? 'Stop' : 'Speak'}
+                disabled={!selectedName}
+                onClick={() => (listening ? stopListening() : startListening())}
+              >
+                {listening ? <MicOff size={18} /> : <Mic size={18} />}
+              </button>
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  listening
+                    ? 'Listening…'
+                    : !selectedName
+                      ? 'Chat starts after you pick a name'
+                    : mode === 'expense'
+                      ? `Log an expense for ${selectedName}…`
+                      : mode === 'assignments'
+                        ? 'e.g. Rahul is assigned to book train tickets for 23rd…'
+                        : `Ask about your tasks or spending, ${selectedName}…`
+                }
+                disabled={loading || !selectedName}
+              />
+              <button type="submit" className="assistant-send" disabled={loading || !input.trim()}>
+                <Send size={16} />
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
