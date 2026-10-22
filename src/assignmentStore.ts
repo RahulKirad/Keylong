@@ -54,8 +54,15 @@ function save(state: AssignmentState): void {
 let state = load();
 
 export function setAssignmentStateFromServer(serverState: AssignmentState): void {
+  const keeperByName = new Map(
+    getExpenseState().members.map((member) => [member.name.trim().toLowerCase(), member.id]),
+  );
   state = {
-    assignments: serverState.assignments || [],
+    assignments: (serverState.assignments || []).map((assignment) => {
+      const keeper = keeperByName.get((assignment.assigneeName || '').trim().toLowerCase());
+      if (!keeper || keeper === assignment.assigneePersonId) return assignment;
+      return { ...assignment, assigneePersonId: keeper };
+    }),
   };
   localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new CustomEvent('assignments-updated'));
@@ -158,7 +165,8 @@ export async function deleteAssignment(id: string): Promise<void> {
   state = { ...state, assignments: state.assignments.filter((a) => a.id !== id) };
   save(state);
   try {
-    const { supabase } = await import('./supabaseClient');
+    const { supabase, supabaseConfigured } = await import('./supabaseClient');
+    if (!supabaseConfigured) return;
     await supabase.from('trip_assignments').delete().eq('id', id);
   } catch (e) {
     console.warn('Failed to delete assignment from cloud:', e);

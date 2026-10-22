@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Mountain,
@@ -23,6 +23,7 @@ import {
   Wallet,
   FileText,
   ClipboardList,
+  IdCard,
 } from 'lucide-react';
 import { assignmentsForDay, subscribeAssignments } from './assignmentStore';
 import SyncStatusBadge from './SyncStatusBadge';
@@ -42,51 +43,13 @@ const ROUTE_SEGMENT_IDS: Record<'all' | 'lahaul' | 'parvati', string[]> = {
   lahaul: ['manali', 'sissu', 'keylong', 'jispa'],
   parvati: ['bhuntar', 'kasol', 'chalal', 'malana', 'manikaran'],
 };
-const heroStars = Array.from({ length: 72 }, (_, i) => ({
-  id: i,
-  left: `${(i * 17.3) % 100}%`,
-  top: `${(i * 23.7) % 72}%`,
-  size: i % 9 === 0 ? 2.5 : 1.5,
-  delay: `${(i * 0.37) % 5}s`,
-  dur: `${2.2 + (i % 5) * 0.6}s`,
-}));
-const heroMeteors = [
-  { top: '12%', left: '78%', delay: '0s', dur: '5.5s' },
-  { top: '28%', left: '92%', delay: '2.2s', dur: '4.8s' },
-  { top: '8%', left: '55%', delay: '4.1s', dur: '6.2s' },
-  { top: '18%', left: '65%', delay: '7.5s', dur: '5s' },
-];
-
 function HeroBg() {
   return (
     <div className="hero-bg" aria-hidden="true">
-      <div className="hero-bg-sky" />
-      <div className="hero-stars">
-        {heroStars.map((s) => (
-          <span
-            key={s.id}
-            className="hero-star"
-            style={{
-              left: s.left,
-              top: s.top,
-              width: s.size,
-              height: s.size,
-              animationDuration: s.dur,
-              animationDelay: s.delay,
-            }}
-          />
-        ))}
-      </div>
-      <div className="hero-meteors">
-        {heroMeteors.map((m, i) => (
-          <span
-            key={i}
-            className="hero-meteor"
-            style={{ top: m.top, left: m.left, animationDelay: m.delay, animationDuration: m.dur }}
-          />
-        ))}
-      </div>
-      <div className="hero-glow" />
+      <video className="hero-video" autoPlay muted loop playsInline preload="metadata">
+        <source src="/campfire-banner.mp4" type="video/mp4" />
+      </video>
+      <div className="hero-video-scrim" />
     </div>
   );
 }
@@ -96,6 +59,7 @@ export default function TripPlannerPage() {
   const [selected, setSelected] = useState('sissu');
   const [routeMode, setRouteMode] = useState<'all' | 'lahaul' | 'parvati'>('all');
   const [mobileNav, setMobileNav] = useState(false);
+  const navMenuRef = useRef<HTMLDivElement>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const [allenDraft, setAllenDraft] = useState<{ open: boolean; tab: 'pdf' | 'ppt' }>({
     open: false,
@@ -105,6 +69,22 @@ export default function TripPlannerPage() {
   const [, setAssignmentTick] = useState(0);
 
   useEffect(() => subscribeAssignments(() => setAssignmentTick((t) => t + 1)), []);
+
+  useEffect(() => {
+    if (!mobileNav) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!navMenuRef.current?.contains(event.target as Node)) setMobileNav(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileNav(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [mobileNav]);
   const day = days[activeDay];
   const shown = useMemo(
     () =>
@@ -178,109 +158,128 @@ export default function TripPlannerPage() {
               <span className="brand-sub">HIMACHAL</span>
             </span>
           </a>
-          <div className="nav-dates">
-            <CalendarDays size={15} /> 23 DEC ’26 — 03 JAN ’27
+          <div className="nav-meta">
+            <div className="nav-dates">
+              <CalendarDays size={15} /> 23 DEC ’26 — 03 JAN ’27
+            </div>
+            <SyncStatusBadge compact />
           </div>
-          <SyncStatusBadge compact />
-          <button type="button" className="nav-menu-btn" aria-label="Menu" onClick={() => setMobileNav(!mobileNav)}>
-            {mobileNav ? <X /> : <Menu />}
-          </button>
-        </div>
-        <div className="site-nav-row site-nav-main">
-          <div className="nav-route-tabs">
-            {routeTabs.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={routeMode === m ? 'on' : ''}
-                onClick={() => setRouteMode(m)}
-              >
-                {m === 'all' ? 'Full route' : m === 'lahaul' ? 'Lahaul' : 'Parvati'}
-              </button>
-            ))}
+          <div className="nav-dropdown" ref={navMenuRef}>
+            <button
+              type="button"
+              className="nav-menu-btn"
+              aria-label="Open menu"
+              aria-expanded={mobileNav}
+              onClick={() => setMobileNav((open) => !open)}
+            >
+              {mobileNav ? <X size={16} /> : <Menu size={16} />}
+              Menu
+            </button>
+            {mobileNav && (
+              <div className="nav-dropdown-panel">
+                <div className="nav-route-tabs">
+                  {routeTabs.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={routeMode === m ? 'on' : ''}
+                      onClick={() => setRouteMode(m)}
+                    >
+                      {m === 'all' ? 'Full route' : m === 'lahaul' ? 'Lahaul' : 'Parvati'}
+                    </button>
+                  ))}
+                </div>
+                <nav className="nav-core">
+                  <a href="#map" onClick={closeNav}>
+                    <Route size={15} /> Map
+                  </a>
+                  <a href="#itinerary" onClick={closeNav}>
+                    <CalendarDays size={15} /> Itinerary
+                  </a>
+                  <a href="#budget" onClick={closeNav}>
+                    <IndianRupee size={15} /> Budget
+                  </a>
+                  <Link to="/expenses" onClick={closeNav}>
+                    <Wallet size={15} /> Expenses
+                  </Link>
+                  <Link to="/assignments" onClick={closeNav}>
+                    <ClipboardList size={15} /> Assignments
+                  </Link>
+                  <Link to="/id-proof" onClick={closeNav}>
+                    <IdCard size={15} /> ID proof
+                  </Link>
+                  <button type="button" className="nav-allen-draft" onClick={() => openAllenDraft('pdf')}>
+                    <FileText size={15} />
+                    <span>
+                      {ALLEN_DRAFT.shortLabel}
+                      <span className="nav-allen-hint"> {ALLEN_DRAFT.navbarHint}</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="nav-allen-draft nav-final-itinerary"
+                    onClick={() => {
+                      setFinalItineraryOpen(true);
+                      closeNav();
+                    }}
+                  >
+                    <Route size={15} />
+                    <span>
+                      {FINAL_ROUTE_ITINERARY.shortLabel}
+                      <span className="nav-allen-hint"> {FINAL_ROUTE_ITINERARY.navbarHint}</span>
+                    </span>
+                  </button>
+                </nav>
+                <nav className="nav-secondary">
+                  <a href="#overview" onClick={closeNav}>
+                    <Mountain size={15} /> Overview
+                  </a>
+                  <a href="#transport" onClick={closeNav}>
+                    <TrainFront size={15} /> Transport
+                  </a>
+                  <a href="#flight" onClick={closeNav}>
+                    <Plane size={15} /> Flight
+                  </a>
+                  <a href="#safety" onClick={closeNav}>
+                    <ShieldCheck size={15} /> Safety
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openTripAssistant('trip');
+                      closeNav();
+                    }}
+                  >
+                    <Bot size={15} /> AI assistant
+                  </button>
+                  <Link to="/expenses" onClick={closeNav}>
+                    <Wallet size={15} /> Expenses page
+                  </Link>
+                  <Link to="/assignments" onClick={closeNav}>
+                    <ClipboardList size={15} /> Assignments page
+                  </Link>
+                  <Link to="/id-proof" onClick={closeNav}>
+                    <IdCard size={15} /> ID proof page
+                  </Link>
+                  <button type="button" onClick={() => openAllenDraft('pdf')}>
+                    <FileText size={15} /> {ALLEN_DRAFT.pdf.navLabel}
+                  </button>
+                  <button type="button" onClick={() => openAllenDraft('ppt')}>
+                    <FileText size={15} /> {ALLEN_DRAFT.ppt.navLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFinalItineraryOpen(true);
+                      closeNav();
+                    }}
+                  >
+                    <Route size={15} /> {FINAL_ROUTE_ITINERARY.title}
+                  </button>
+                </nav>
+              </div>
+            )}
           </div>
-          <nav className="nav-core">
-            <a href="#map" onClick={closeNav}>
-              <Route size={15} /> Map
-            </a>
-            <a href="#itinerary" onClick={closeNav}>
-              <CalendarDays size={15} /> Itinerary
-            </a>
-            <a href="#budget" onClick={closeNav}>
-              <IndianRupee size={15} /> Budget
-            </a>
-            <Link to="/expenses" onClick={closeNav}>
-              <Wallet size={15} /> Expenses
-            </Link>
-            <Link to="/assignments" onClick={closeNav}>
-              <ClipboardList size={15} /> Assignments
-            </Link>
-            <button type="button" className="nav-allen-draft" onClick={() => openAllenDraft('pdf')}>
-              <FileText size={15} />
-              <span>
-                {ALLEN_DRAFT.shortLabel}
-                <span className="nav-allen-hint"> {ALLEN_DRAFT.navbarHint}</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="nav-allen-draft nav-final-itinerary"
-              onClick={() => {
-                setFinalItineraryOpen(true);
-                closeNav();
-              }}
-            >
-              <Route size={15} />
-              <span>
-                {FINAL_ROUTE_ITINERARY.shortLabel}
-                <span className="nav-allen-hint"> {FINAL_ROUTE_ITINERARY.navbarHint}</span>
-              </span>
-            </button>
-          </nav>
-          <nav className={`nav-secondary ${mobileNav ? 'show' : ''}`}>
-            <a href="#overview" onClick={closeNav}>
-              <Mountain size={15} /> Overview
-            </a>
-            <a href="#transport" onClick={closeNav}>
-              <TrainFront size={15} /> Transport
-            </a>
-            <a href="#flight" onClick={closeNav}>
-              <Plane size={15} /> Flight
-            </a>
-            <a href="#safety" onClick={closeNav}>
-              <ShieldCheck size={15} /> Safety
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                openTripAssistant('trip');
-                closeNav();
-              }}
-            >
-              <Bot size={15} /> AI assistant
-            </button>
-            <Link to="/expenses" onClick={closeNav}>
-              <Wallet size={15} /> Expenses page
-            </Link>
-            <Link to="/assignments" onClick={closeNav}>
-              <ClipboardList size={15} /> Assignments page
-            </Link>
-            <button type="button" onClick={() => openAllenDraft('pdf')}>
-              <FileText size={15} /> {ALLEN_DRAFT.pdf.navLabel}
-            </button>
-            <button type="button" onClick={() => openAllenDraft('ppt')}>
-              <FileText size={15} /> {ALLEN_DRAFT.ppt.navLabel}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFinalItineraryOpen(true);
-                closeNav();
-              }}
-            >
-              <Route size={15} /> {FINAL_ROUTE_ITINERARY.title}
-            </button>
-          </nav>
         </div>
       </header>
       <AllenDraftModal

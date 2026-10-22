@@ -2,6 +2,7 @@ import { days } from './tripData';
 import { memberBalanceRemaining } from './expenseLedger';
 import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
 import { registerTravellerSeeder } from './travellerSeed';
+import { collapseMembers, remapId, stableMemberId } from './memberIdentity';
 
 export const EXPENSE_STORAGE_KEY = 'winter-himachal-expenses-v1';
 
@@ -91,17 +92,38 @@ function normalizeExpense(e: ExpenseRecord): ExpenseRecord {
   };
 }
 
+/** One record per name, and point expenses and transfers at the record that is kept. */
+export function dedupeExpenseState(input: ExpenseStoreState): ExpenseStoreState {
+  const { members, remap } = collapseMembers(input.members || []);
+  const idOf = (id?: string) => remapId(id, remap);
+  return {
+    ...input,
+    members,
+    expenses: (input.expenses || []).map((expense) => ({
+      ...normalizeExpense(expense),
+      paidByPersonId: idOf(expense.paidByPersonId) || expense.paidByPersonId,
+      balanceHolderPersonId: idOf(expense.balanceHolderPersonId),
+      givenByPersonId: idOf(expense.givenByPersonId),
+    })),
+    transfers: (input.transfers || []).map((transfer) => ({
+      ...transfer,
+      fromPersonId: idOf(transfer.fromPersonId) || transfer.fromPersonId,
+      toPersonId: idOf(transfer.toPersonId) || transfer.toPersonId,
+    })),
+  };
+}
+
 function load(): ExpenseStoreState {
   try {
     const raw = localStorage.getItem(EXPENSE_STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw) as ExpenseStoreState;
-    return {
+    return dedupeExpenseState({
       members: parsed.members || [],
       expenses: (parsed.expenses || []).map(normalizeExpense),
       transfers: parsed.transfers || [],
       pending: parsed.pending || [],
-    };
+    });
   } catch {
     return defaultState();
   }
@@ -116,24 +138,27 @@ function save(state: ExpenseStoreState): void {
 let state = load();
 
 export function setExpenseStateFromServer(serverState: ExpenseStoreState): void {
-  state = {
+  state = dedupeExpenseState({
     members: serverState.members || [],
     expenses: (serverState.expenses || []).map(normalizeExpense),
     transfers: serverState.transfers || [],
     pending: state.pending || [],
-  };
+  });
   localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new CustomEvent('expenses-updated'));
 }
 
 function seedDefaultTravellersIfNeeded(): void {
-  let changed = false;
+  let next = dedupeExpenseState(state);
+  let changed =
+    next.members.length !== state.members.length ||
+    next.members.some((member, index) => member.id !== state.members[index]?.id);
   for (const name of DEFAULT_TRAVELLER_NAMES) {
-    if (state.members.length >= 10) break;
-    if (state.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) continue;
-    state = { ...state, members: [...state.members, { id: newId(), name }] };
+    if (next.members.some((member) => member.name.toLowerCase() === name.toLowerCase())) continue;
+    next = { ...next, members: [...next.members, { id: stableMemberId(name), name }] };
     changed = true;
   }
+  state = next;
   if (changed) save(state);
 }
 
@@ -180,11 +205,11 @@ export function parseDateFromText(text: string): { tripDate: string; dateLabel: 
 
 export function addMember(name: string): TripMember | null {
   const trimmed = name.trim();
-  if (!trimmed || state.members.length >= 10) return null;
-  if (state.members.some((m) => m.name.toLowerCase() === trimmed.toLowerCase())) {
-    return state.members.find((m) => m.name.toLowerCase() === trimmed.toLowerCase())!;
-  }
-  const member: TripMember = { id: newId(), name: trimmed };
+  if (!trimmed) return null;
+  const existing = state.members.find((m) => m.name.toLowerCase() === trimmed.toLowerCase());
+  if (existing) return existing;
+  if (state.members.length >= 10) return null;
+  const member: TripMember = { id: stableMemberId(trimmed), name: trimmed };
   state = { ...state, members: [...state.members, member] };
   save(state);
   return member;
@@ -194,7 +219,8 @@ export async function removeMember(id: string): Promise<void> {
   state = { ...state, members: state.members.filter((m) => m.id !== id) };
   save(state);
   try {
-    const { supabase } = await import('./supabaseClient');
+    const { supabase, supabaseConfigured } = await import('./supabaseClient');
+    if (!supabaseConfigured) return;
     await supabase.from('trip_members').delete().eq('id', id);
   } catch (e) {
     console.warn('Failed to delete member from cloud:', e);
@@ -327,7 +353,8 @@ export async function deleteExpense(id: string): Promise<void> {
   state = { ...state, expenses: state.expenses.filter((e) => e.id !== id) };
   save(state);
   try {
-    const { supabase } = await import('./supabaseClient');
+    const { supabase, supabaseConfigured } = await import('./supabaseClient');
+    if (!supabaseConfigured) return;
     await supabase.from('trip_expenses').delete().eq('id', id);
   } catch (e) {
     console.warn('Failed to delete expense from cloud:', e);
@@ -352,7 +379,8 @@ export async function deleteFundTransfer(id: string): Promise<void> {
   state = { ...state, transfers: state.transfers.filter((t) => t.id !== id) };
   save(state);
   try {
-    const { supabase } = await import('./supabaseClient');
+    const { supabase, supabaseConfigured } = await import('./supabaseClient');
+    if (!supabaseConfigured) return;
     await supabase.from('trip_transfers').delete().eq('id', id);
   } catch (e) {
     console.warn('Failed to delete transfer from cloud:', e);

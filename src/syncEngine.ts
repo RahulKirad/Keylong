@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { supabase, supabaseConfigured } from './supabaseClient';
 import {
   getExpenseState,
   setExpenseStateFromServer,
@@ -13,6 +13,7 @@ import {
   TripAssignment,
 } from './assignmentStore';
 import { BUDGET_STORAGE_KEY, BudgetCategory } from './budgetData';
+import { collapseMembers } from './memberIdentity';
 
 export type SyncStatusState = {
   status: 'synced' | 'syncing' | 'offline' | 'error';
@@ -72,8 +73,46 @@ function computeDataHash(data: {
   });
 }
 
+function personId(id: string | undefined, remap: Map<string, string>): string {
+  if (!id) return '';
+  return remap.get(id) || id;
+}
+
+/** Delete repeated names from the shared database and point tasks and expenses at the one record that remains. */
+async function removeDuplicateTravellers(
+  rows: { id: string; name: string }[],
+  remap: Map<string, string>,
+): Promise<void> {
+  const keep = new Set(collapseMembers(rows).members.map((member) => member.id));
+  const dropIds = rows.map((row) => row.id).filter((id) => !keep.has(id));
+  if (dropIds.length > 0) {
+    const { error } = await supabase.from('trip_members').delete().in('id', dropIds);
+    if (error) console.warn('Could not remove duplicate travellers:', error.message);
+  }
+  if (remap.size === 0) return;
+  const writes = [...remap.entries()].flatMap(([from, to]) => [
+    supabase.from('trip_assignments').update({ assignee_person_id: to }).eq('assignee_person_id', from),
+    supabase.from('trip_expenses').update({ paid_by_person_id: to }).eq('paid_by_person_id', from),
+    supabase.from('trip_expenses').update({ balance_holder_person_id: to }).eq('balance_holder_person_id', from),
+    supabase.from('trip_expenses').update({ given_by_person_id: to }).eq('given_by_person_id', from),
+    supabase.from('trip_transfers').update({ from_person_id: to }).eq('from_person_id', from),
+    supabase.from('trip_transfers').update({ to_person_id: to }).eq('to_person_id', from),
+  ]);
+  const results = await Promise.all(writes);
+  for (const result of results) {
+    if (result.error) console.warn('Could not retarget traveller link:', result.error.message);
+  }
+}
+
 /** Pull complete database from Supabase and merge into local stores. */
 export async function pullDatabase(): Promise<boolean> {
+  if (!supabaseConfigured) {
+    updateStatus({
+      status: 'offline',
+      message: 'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in a .env file, then restart npm run dev.',
+    });
+    return false;
+  }
   if (isSyncing) return false;
   isSyncing = true;
   updateStatus({ status: 'syncing' });
@@ -93,10 +132,16 @@ export async function pullDatabase(): Promise<boolean> {
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (budgetRes.error) throw budgetRes.error;
 
-    const members = (membersRes.data || []).map((r: any) => ({
-      id: r.id,
-      name: r.name,
+    const rawMembers = (membersRes.data || []).map((r: any) => ({
+      id: r.id as string,
+      name: r.name as string,
     }));
+    const collapsed = collapseMembers(rawMembers);
+    const members = collapsed.members;
+    const remap = collapsed.remap;
+    if (remap.size > 0 || members.length !== rawMembers.length) {
+      await removeDuplicateTravellers(rawMembers, remap);
+    }
 
     const expenses = (expensesRes.data || []).map((r: any) => ({
       id: r.id,
@@ -105,13 +150,13 @@ export async function pullDatabase(): Promise<boolean> {
       description: r.description || '',
       category: r.category || '',
       amountInr: r.amount_inr || 0,
-      paidByPersonId: r.paid_by_person_id || '',
+      paidByPersonId: personId(r.paid_by_person_id, remap),
       paidByName: r.paid_by_name || '',
       paymentMethod: r.payment_method || 'unknown',
       spentFromBalance: Boolean(r.spent_from_balance),
-      balanceHolderPersonId: r.balance_holder_person_id || undefined,
+      balanceHolderPersonId: personId(r.balance_holder_person_id, remap) || undefined,
       balanceHolderName: r.balance_holder_name || undefined,
-      givenByPersonId: r.given_by_person_id || undefined,
+      givenByPersonId: personId(r.given_by_person_id, remap) || undefined,
       givenByName: r.given_by_name || undefined,
       createdAt: r.created_at || 0,
       updatedAt: r.updated_at || 0,
@@ -122,9 +167,9 @@ export async function pullDatabase(): Promise<boolean> {
       id: r.id,
       tripDate: r.trip_date || '',
       dateLabel: r.date_label || '',
-      fromPersonId: r.from_person_id || '',
+      fromPersonId: personId(r.from_person_id, remap),
       fromPersonName: r.from_person_name || '',
-      toPersonId: r.to_person_id || '',
+      toPersonId: personId(r.to_person_id, remap),
       toPersonName: r.to_person_name || '',
       amountInr: r.amount_inr || 0,
       paymentMethod: r.payment_method || 'unknown',
@@ -135,7 +180,7 @@ export async function pullDatabase(): Promise<boolean> {
 
     const assignments = (assignmentsRes.data || []).map((r: any) => ({
       id: r.id,
-      assigneePersonId: r.assignee_person_id || '',
+      assigneePersonId: personId(r.assignee_person_id, remap),
       assigneeName: r.assignee_name || '',
       task: r.task || '',
       tripDayNumber: r.trip_day_number ?? undefined,
@@ -146,13 +191,14 @@ export async function pullDatabase(): Promise<boolean> {
     }));
 
     const budgetRow = budgetRes.data as any;
-    const budget = budgetRow
-      ? {
-          categories: budgetRow.categories as BudgetCategory[],
-          travelers: budgetRow.travelers || 2,
-          tripTarget: budgetRow.trip_target || 0,
-        }
-      : null;
+    const budget =
+      budgetRow && Array.isArray(budgetRow.categories)
+        ? {
+            categories: budgetRow.categories as BudgetCategory[],
+            travelers: budgetRow.travelers || 2,
+            tripTarget: budgetRow.trip_target || 0,
+          }
+        : null;
 
     const localExpenses = getExpenseState();
     const mergedExpenses: ExpenseStoreState = {
@@ -199,7 +245,7 @@ export async function pullDatabase(): Promise<boolean> {
 
 /** Check if server has newer data by comparing row counts. */
 export async function checkServerStatus(): Promise<void> {
-  if (isSyncing) return;
+  if (!supabaseConfigured || isSyncing) return;
   try {
     const [membersRes, expensesRes, transfersRes, assignmentsRes] = await Promise.all([
       supabase.from('trip_members').select('id', { count: 'exact', head: true }),
@@ -241,6 +287,7 @@ export async function checkServerStatus(): Promise<void> {
 
 /** Push local state to Supabase via upsert. */
 export async function pushSync(): Promise<boolean> {
+  if (!supabaseConfigured) return false;
   if (!navigator.onLine) {
     updateStatus({ status: 'offline', message: 'Offline: changes saved locally' });
     return false;
@@ -258,7 +305,9 @@ export async function pushSync(): Promise<boolean> {
   }
 
   try {
-    const memberRows = exp.members.map((m) => ({ id: m.id, name: m.name }));
+    const collapsed = collapseMembers(exp.members);
+    const remap = collapsed.remap;
+    const memberRows = collapsed.members.map((m) => ({ id: m.id, name: m.name }));
 
     const expenseRows = exp.expenses.map((e) => ({
       id: e.id,
@@ -267,13 +316,13 @@ export async function pushSync(): Promise<boolean> {
       description: e.description,
       category: e.category,
       amount_inr: e.amountInr,
-      paid_by_person_id: e.paidByPersonId,
+      paid_by_person_id: personId(e.paidByPersonId, remap),
       paid_by_name: e.paidByName,
       payment_method: e.paymentMethod,
       spent_from_balance: e.spentFromBalance,
-      balance_holder_person_id: e.balanceHolderPersonId || null,
+      balance_holder_person_id: personId(e.balanceHolderPersonId, remap) || null,
       balance_holder_name: e.balanceHolderName || null,
-      given_by_person_id: e.givenByPersonId || null,
+      given_by_person_id: personId(e.givenByPersonId, remap) || null,
       given_by_name: e.givenByName || null,
       created_at: e.createdAt,
       updated_at: e.updatedAt,
@@ -284,9 +333,9 @@ export async function pushSync(): Promise<boolean> {
       id: t.id,
       trip_date: t.tripDate,
       date_label: t.dateLabel,
-      from_person_id: t.fromPersonId,
+      from_person_id: personId(t.fromPersonId, remap),
       from_person_name: t.fromPersonName,
-      to_person_id: t.toPersonId,
+      to_person_id: personId(t.toPersonId, remap),
       to_person_name: t.toPersonName,
       amount_inr: t.amountInr,
       payment_method: t.paymentMethod,
@@ -297,7 +346,7 @@ export async function pushSync(): Promise<boolean> {
 
     const assignmentRows = asg.assignments.map((a) => ({
       id: a.id,
-      assignee_person_id: a.assigneePersonId,
+      assignee_person_id: personId(a.assigneePersonId, remap),
       assignee_name: a.assigneeName,
       task: a.task,
       trip_day_number: a.tripDayNumber ?? null,
@@ -336,6 +385,21 @@ export async function pushSync(): Promise<boolean> {
       if (r.error) throw r.error;
     }
 
+    const { data: serverMembers, error: memberListError } = await supabase
+      .from('trip_members')
+      .select('id, name')
+      .order('created_at', { ascending: true });
+    if (!memberListError && serverMembers) {
+      const serverRows = serverMembers.map((row: { id: string; name: string }) => ({
+        id: row.id,
+        name: row.name,
+      }));
+      const serverCollapse = collapseMembers(serverRows);
+      if (serverCollapse.remap.size > 0 || serverCollapse.members.length !== serverRows.length) {
+        await removeDuplicateTravellers(serverRows, serverCollapse.remap);
+      }
+    }
+
     const version = expenseRows.length + transferRows.length + assignmentRows.length + memberRows.length;
     updateStatus({
       status: 'synced',
@@ -369,6 +433,14 @@ export function triggerDebouncedSync(): void {
 export function initSyncEngine(): void {
   if (isEngineInitialized) return;
   isEngineInitialized = true;
+
+  if (!supabaseConfigured) {
+    updateStatus({
+      status: 'offline',
+      message: 'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in a .env file, then restart npm run dev.',
+    });
+    return;
+  }
 
   window.addEventListener('trigger-cloud-sync', () => {
     triggerDebouncedSync();

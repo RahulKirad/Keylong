@@ -1,3 +1,5 @@
+import { supabase, supabaseConfigured } from './supabaseClient';
+
 export const GEMINI_STORAGE_KEY = 'winter-himachal-gemini-config';
 
 export type GeminiConfig = {
@@ -107,30 +109,86 @@ export type SharedGeminiConfig = {
   model: string;
 };
 
-/** The one Gemini key saved for this site, shared by every browser. */
-export async function fetchSharedGeminiConfig(): Promise<SharedGeminiConfig | null> {
-  const res = await fetch('/api/gemini/config');
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  if (!data || typeof data.apiKey !== 'string') return null;
+const SHARED_BUDGET_ID = 'gemini-config';
+
+/** The published site is a static page, so it must not call the local Express routes. */
+export function isLocalDevHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+}
+
+function normalizeShared(apiKey: unknown, model: unknown): SharedGeminiConfig | null {
+  if (typeof apiKey !== 'string' || !apiKey.trim()) return null;
   return {
-    apiKey: data.apiKey.trim(),
-    model: typeof data.model === 'string' && data.model.trim() ? data.model.trim() : DEFAULT_GEMINI_MODEL,
+    apiKey: apiKey.trim(),
+    model: typeof model === 'string' && model.trim() ? model.trim() : DEFAULT_GEMINI_MODEL,
   };
 }
 
-/** Save the Gemini key on the server so Chrome, Edge, and every other browser use it. */
+async function readSharedFromDatabase(): Promise<SharedGeminiConfig | null> {
+  if (!supabaseConfigured) return null;
+  const budget = await supabase.from('trip_budget').select('categories').eq('id', SHARED_BUDGET_ID).maybeSingle();
+  if (budget.error || !budget.data) return null;
+  const stored = budget.data.categories as { apiKey?: unknown; model?: unknown } | null;
+  if (!stored || Array.isArray(stored)) return null;
+  return normalizeShared(stored.apiKey, stored.model);
+}
+
+/** The one Gemini key saved for this site, shared by every browser. */
+export async function fetchSharedGeminiConfig(): Promise<SharedGeminiConfig | null> {
+  try {
+    const shared = await readSharedFromDatabase();
+    if (shared?.apiKey) return shared;
+  } catch {
+    // Fall through to the local dev server when this browser cannot reach Supabase.
+  }
+
+  if (!isLocalDevHost()) return null;
+  try {
+    const res = await fetch('/api/gemini/config');
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    return normalizeShared(data?.apiKey, data?.model);
+  } catch {
+    return null;
+  }
+}
+
+/** Save the Gemini key in the shared trip database so every browser uses it. */
 export async function publishSharedGeminiConfig(config: SharedGeminiConfig): Promise<void> {
-  const res = await fetch('/api/gemini/config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      apiKey: config.apiKey.trim(),
-      model: config.model.trim() || DEFAULT_GEMINI_MODEL,
-    }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.error || 'Could not save the shared Gemini key');
+  const apiKey = config.apiKey.trim();
+  const model = config.model.trim() || DEFAULT_GEMINI_MODEL;
+  let saved = false;
+
+  if (supabaseConfigured) {
+    const budget = await supabase.from('trip_budget').upsert(
+      {
+        id: SHARED_BUDGET_ID,
+        categories: { apiKey, model },
+        travelers: 0,
+        trip_target: 0,
+        updated_at: Date.now(),
+      },
+      { onConflict: 'id' },
+    );
+    if (!budget.error) saved = true;
+  }
+
+  if (isLocalDevHost()) {
+    try {
+      const res = await fetch('/api/gemini/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey, model }),
+      });
+      if (res.ok) saved = true;
+    } catch {
+      // The local Express route is optional. The shared database is the copy every browser reads.
+    }
+  }
+
+  if (!saved) {
+    throw new Error('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env so every browser can share this key.');
   }
 }

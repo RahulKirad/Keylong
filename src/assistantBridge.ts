@@ -39,3 +39,17 @@ export function navigateToAssignments(): void {
   }
   window.location.assign('/assignments');
 }
+
+let idProofNavFn: ((show: boolean) => void) | null = null;
+
+export function registerIdProofNavigation(fn: (show: boolean) => void): void {
+  idProofNavFn = fn;
+}
+
+export function navigateToIdProof(show = false): void {
+  if (idProofNavFn) {
+    idProofNavFn(show);
+    return;
+  }
+  window.location.assign(show ? '/id-proof?show=1' : '/id-proof');
+}

@@ -11,7 +11,6 @@ import {
   deleteFundTransfer,
   exportExpensesCsv,
   getExpenseState,
-  grandTotal,
   removeMember,
   removePending,
   subscribeExpenses,
@@ -21,6 +20,8 @@ import {
 import { parseMoneyUtterance } from './expenseParse';
 import { loadGeminiConfig } from './geminiConfig';
 import { openTripAssistant } from './assistantBridge';
+import { getSelectedTraveller, setSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
+import { listTravellerNames } from './travellerBrief';
 import ExpenseSwipeRow from './ExpenseSwipeRow';
 import TravellerLedgerPanel from './TravellerLedgerPanel';
 
@@ -44,16 +45,29 @@ type ExpensesSectionProps = {
   standalone?: boolean;
 };
 
+function samePerson(value: string | undefined, name: string): boolean {
+  return (value || '').trim().toLowerCase() === name.trim().toLowerCase();
+}
+
 export default function ExpensesSection({ standalone = false }: ExpensesSectionProps) {
   const [snap, setSnap] = useState(getExpenseState());
   const [online, setOnline] = useState(navigator.onLine);
   const [newName, setNewName] = useState('');
   const [editing, setEditing] = useState<ExpenseRecord | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [focusName, setFocusName] = useState<string | null>(() => getSelectedTraveller());
+  const [names, setNames] = useState<string[]>(() => listTravellerNames());
 
   const refresh = () => setSnap(getExpenseState());
 
   useEffect(() => subscribeExpenses(refresh), []);
+  useEffect(() => subscribeSelectedTraveller(setFocusName), []);
+  useEffect(() => {
+    const refreshNames = () => setNames(listTravellerNames());
+    refreshNames();
+    window.addEventListener('expenses-updated', refreshNames);
+    return () => window.removeEventListener('expenses-updated', refreshNames);
+  }, []);
   useEffect(() => {
     const on = () => setOnline(true);
     const off = () => setOnline(false);
@@ -72,7 +86,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
     const config = loadGeminiConfig();
     for (const p of pending) {
       try {
-        const parsed = await parseMoneyUtterance(p.rawText, config, true);
+        const parsed = await parseMoneyUtterance(p.rawText, config, true, getSelectedTraveller() || undefined);
         if (parsed.kind === 'give') addFundTransfer(parsed);
         else addExpense(parsed);
         removePending(p.id);
@@ -89,7 +103,27 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
   }, [online, snap.pending.length]);
 
   const memberTotals = totalsByMember();
-  const total = grandTotal();
+  const focusMember = focusName
+    ? snap.members.find((member) => samePerson(member.name, focusName))
+    : undefined;
+  const visibleExpenses = focusName
+    ? snap.expenses.filter(
+        (expense) =>
+          samePerson(expense.paidByName, focusName) ||
+          samePerson(expense.balanceHolderName, focusName) ||
+          samePerson(expense.givenByName, focusName),
+      )
+    : snap.expenses;
+  const visibleTransfers = focusName
+    ? snap.transfers.filter(
+        (transfer) =>
+          samePerson(transfer.fromPersonName, focusName) || samePerson(transfer.toPersonName, focusName),
+      )
+    : snap.transfers;
+  const visibleTotals = focusName
+    ? memberTotals.filter(({ member }) => samePerson(member.name, focusName))
+    : memberTotals;
+  const total = visibleExpenses.reduce((sum, expense) => sum + expense.amountInr, 0);
 
   function addPerson() {
     addMember(newName);
@@ -167,9 +201,9 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
           <div className="eyebrow">GROUP TRIP MONEY</div>
           <h2>{standalone ? 'Winter Himachal Expenses' : 'Shared expenses tally.'}</h2>
           <p>
-            Add travellers, log who gave cash to whom, and track spends (cash, online, or from someone’s balance).
-            Use the AI assistant in <b>Log expense</b> mode — e.g. “Rahul gave 10000 to Sanket cash” or “Sanket spent
-            1500 dinner from balance cash”.
+            {focusName
+              ? `Showing money for ${focusName}. Log expense records new spends as paid by ${focusName}.`
+              : 'Pick a traveller. Expenses and Log expense then follow that name.'}
           </p>
         </div>
         <div className="expenses-status">
@@ -179,6 +213,20 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
             <span className="expenses-pending">{snap.pending.length} pending parse</span>
           )}
         </div>
+      </div>
+
+      <div className="assistant-name-row expenses-focus-row">
+        <span className="assistant-name-label">{focusName ? 'Showing' : 'Pick a traveller'}</span>
+        {names.map((name) => (
+          <button
+            key={name}
+            type="button"
+            className={focusName && samePerson(focusName, name) ? 'on' : ''}
+            onClick={() => setSelectedTraveller(name)}
+          >
+            {name}
+          </button>
+        ))}
       </div>
 
       <div className="expenses-toolbar">
@@ -229,11 +277,11 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
         <div className="expenses-layout-main">
           <div className="expenses-summary-grid">
             <article className="expenses-summary-card expenses-summary-total">
-              <small>TOTAL SPENT</small>
+              <small>{focusName ? `${focusName.toUpperCase()} SPENT` : 'TOTAL SPENT'}</small>
               <strong>{fmt(total)}</strong>
-              <span>{snap.expenses.length} entries</span>
+              <span>{visibleExpenses.length} entries</span>
             </article>
-            {memberTotals.map(({ member, total: t }) => (
+            {visibleTotals.map(({ member, total: t }) => (
               <article key={member.id} className="expenses-summary-card">
                 <small>{member.name.toUpperCase()}</small>
                 <strong>{fmt(t)}</strong>
@@ -242,7 +290,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
             ))}
           </div>
 
-          {snap.transfers.length > 0 && (
+          {visibleTransfers.length > 0 && (
             <div className="expenses-transfers-block">
               <h4>Cash given to travellers</h4>
               <div className="expenses-table-wrap expenses-transfers-wrap">
@@ -258,7 +306,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
                     </tr>
                   </thead>
                   <tbody>
-                    {snap.transfers.map((t) => (
+                    {visibleTransfers.map((t) => (
                       <tr key={t.id}>
                         <td>{t.dateLabel}</td>
                         <td><strong>{t.fromPersonName}</strong></td>
@@ -301,7 +349,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
           <p className="expenses-delete-hint">Wrong entry? Swipe left on mobile or tap <b>Delete</b> in the table.</p>
 
           <div className="expenses-mobile-list">
-            {snap.expenses.map((e) => (
+            {visibleExpenses.map((e) => (
               <ExpenseSwipeRow
                 key={e.id}
                 expense={e}
@@ -329,15 +377,16 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
                 </tr>
               </thead>
               <tbody>
-                {snap.expenses.length === 0 && (
+                {visibleExpenses.length === 0 && (
                   <tr>
                     <td colSpan={9} className="expenses-empty">
-                      No expenses yet. Say e.g. “25 December dinner 2000 Rahul online” or “Sanket spent 800 tea from
-                      balance cash”.
+                      {focusName
+                        ? `No expenses for ${focusName} yet. In Log expense, say “25 Dec dinner 2000 cash”.`
+                        : 'Pick a traveller above, then log an expense in their name.'}
                     </td>
                   </tr>
                 )}
-                {snap.expenses.map((e) => (
+                {visibleExpenses.map((e) => (
                   <tr key={e.id}>
                     <td>{e.dateLabel}</td>
                     <td>{e.description}</td>
@@ -371,7 +420,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
                   </tr>
                 ))}
               </tbody>
-              {snap.expenses.length > 0 && (
+              {visibleExpenses.length > 0 && (
                 <tfoot>
                   <tr>
                     <td colSpan={3}><strong>Grand total</strong></td>
@@ -384,7 +433,11 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
           </div>
         </div>
 
-        <TravellerLedgerPanel members={snap.members} transfers={snap.transfers} expenses={snap.expenses} />
+        <TravellerLedgerPanel
+          members={focusMember ? [focusMember] : snap.members}
+          transfers={snap.transfers}
+          expenses={snap.expenses}
+        />
       </div>
 
       {editing && (
