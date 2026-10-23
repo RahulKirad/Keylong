@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { tripMeta } from './tripData';
+import { getTripMeta } from './itineraryStore';
 import { briefForName, type PersonalBrief, type PersonalTopic } from './travellerBrief';
 import { idTypeLabel } from './idProofStore';
 
@@ -43,13 +43,13 @@ function headerImage(name: string): string {
   ctx.fillRect(0, 336, 1600, 24);
   ctx.fillStyle = '#f7f4ec';
   ctx.font = '700 54px Georgia, serif';
-  ctx.fillText('Winter Himachal', 56, 88);
+  ctx.fillText('Spiti Tour 2026', 56, 88);
   ctx.font = '500 28px Georgia, serif';
   ctx.fillStyle = '#e5c17a';
   ctx.fillText(`${name}'s trip record`, 56, 136);
   ctx.font = '400 22px sans-serif';
   ctx.fillStyle = '#d5e2e8';
-  ctx.fillText(tripMeta.dates, 56, 176);
+  ctx.fillText(getTripMeta().dates, 56, 176);
   const initial = (name.trim()[0] || 'T').toUpperCase();
   ctx.fillStyle = '#e5c17a';
   ctx.beginPath();
@@ -258,9 +258,9 @@ export function downloadPersonalPdf(name: string, topics: PersonalTopic[]): void
     doc.setPage(page);
     doc.setFontSize(8);
     doc.setTextColor(120, 132, 136);
-    doc.text(`Winter Himachal · ${name} · page ${page} of ${pageCount}`, 14, 290);
+    doc.text(`Spiti Tour 2026 · ${name} · page ${page} of ${pageCount}`, 14, 290);
   }
 
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'traveller';
-  doc.save(`winter-himachal-${slug}-record.pdf`);
+  doc.save(`spiti-tour-2026-${slug}-record.pdf`);
 }

@@ -130,7 +130,7 @@ export default function BudgetCalculator() {
 
   async function copySummary() {
     const lines = [
-      'WINTER HIMACHAL — BUDGET SUMMARY',
+      'SPITI TOUR 2026 — BUDGET SUMMARY',
       `Travelers: ${travelers}`,
       tripTarget > 0 ? `Trip target: ${fmt(tripTarget)}` : '',
       `Estimated total: ${fmt(total)}`,

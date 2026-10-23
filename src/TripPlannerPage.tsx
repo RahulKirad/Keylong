@@ -34,14 +34,39 @@ import { FINAL_ROUTE_ITINERARY } from './finalRouteItineraryAssets';
 import BudgetCalculator from './BudgetCalculator';
 import TripMap from './TripMap';
 import TripAssistant from './TripAssistant';
+import ItineraryTables from './ItineraryTables';
 import { openTripAssistant } from './assistantBridge';
 import type { LatLng } from './routeUtils';
-import { places, days, safetyChecklist, type Place } from './tripData';
+import type { Place } from './tripData';
+import {
+  getDays,
+  getPlaces,
+  getSafetyChecklist,
+  getTripMeta,
+  subscribeItinerary,
+} from './itineraryStore';
 
-const ROUTE_SEGMENT_IDS: Record<'all' | 'lahaul' | 'parvati', string[]> = {
-  all: ['delhi', 'manali', 'sissu', 'keylong', 'jispa', 'bhuntar', 'kasol', 'delhi'],
-  lahaul: ['manali', 'sissu', 'keylong', 'jispa'],
-  parvati: ['bhuntar', 'kasol', 'chalal', 'malana', 'manikaran'],
+type RouteMode = 'all' | 'approach' | 'spiti' | 'return';
+
+const ROUTE_SEGMENT_IDS: Record<RouteMode, string[]> = {
+  all: [
+    'pune',
+    'mumbai',
+    'delhi',
+    'shimla',
+    'narkanda',
+    'sangla',
+    'kalpa',
+    'nako',
+    'tabo',
+    'kaza',
+    'langza',
+    'kufri',
+    'delhi',
+  ],
+  approach: ['delhi', 'shimla', 'narkanda', 'sangla', 'kalpa'],
+  spiti: ['kalpa', 'nako', 'tabo', 'kaza', 'langza'],
+  return: ['kaza', 'tabo', 'nako', 'kalpa', 'narkanda', 'shimla', 'kufri', 'delhi'],
 };
 function HeroBg() {
   return (
@@ -56,8 +81,8 @@ function HeroBg() {
 
 export default function TripPlannerPage() {
   const [activeDay, setActiveDay] = useState(2);
-  const [selected, setSelected] = useState('sissu');
-  const [routeMode, setRouteMode] = useState<'all' | 'lahaul' | 'parvati'>('all');
+  const [selected, setSelected] = useState('shimla');
+  const [routeMode, setRouteMode] = useState<RouteMode>('all');
   const [mobileNav, setMobileNav] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const [checked, setChecked] = useState<string[]>([]);
@@ -67,8 +92,15 @@ export default function TripPlannerPage() {
   });
   const [finalItineraryOpen, setFinalItineraryOpen] = useState(false);
   const [, setAssignmentTick] = useState(0);
+  const [, setItineraryTick] = useState(0);
 
   useEffect(() => subscribeAssignments(() => setAssignmentTick((t) => t + 1)), []);
+  useEffect(() => subscribeItinerary(() => setItineraryTick((t) => t + 1)), []);
+
+  const places = getPlaces();
+  const days = getDays();
+  const safetyChecklist = getSafetyChecklist();
+  const tripMeta = getTripMeta();
 
   useEffect(() => {
     if (!mobileNav) return;
@@ -88,18 +120,12 @@ export default function TripPlannerPage() {
   const day = days[activeDay];
   const shown = useMemo(
     () =>
-      places.filter((p) =>
-        routeMode === 'all'
-          ? true
-          : routeMode === 'lahaul'
-            ? ['manali', 'sissu', 'keylong', 'jispa'].includes(p.id)
-            : ['bhuntar', 'kasol', 'chalal', 'malana', 'manikaran'].includes(p.id),
-      ),
-    [routeMode],
+      places.filter((p) => (routeMode === 'all' ? true : ROUTE_SEGMENT_IDS[routeMode].includes(p.id))),
+    [places, routeMode],
   );
   const routePlaces = useMemo(
     () => day.ids.map((id) => places.find((p) => p.id === id)).filter(Boolean) as Place[],
-    [day],
+    [day, places],
   );
   const dayWaypoints = useMemo(() => routePlaces.map((p) => [p.lat, p.lng] as LatLng), [routePlaces]);
   const segmentWaypoints = useMemo(
@@ -108,7 +134,7 @@ export default function TripPlannerPage() {
         .map((id) => places.find((p) => p.id === id))
         .filter(Boolean)
         .map((p) => [p!.lat, p!.lng] as LatLng),
-    [routeMode],
+    [places, routeMode],
   );
   const mapWaypoints = dayWaypoints.length >= 2 ? dayWaypoints : segmentWaypoints;
   const chosen = places.find((p) => p.id === selected) || places[2];
@@ -143,7 +169,13 @@ export default function TripPlannerPage() {
     }
   };
 
-  const routeTabs = ['all', 'lahaul', 'parvati'] as const;
+  const routeTabs: RouteMode[] = ['all', 'approach', 'spiti', 'return'];
+  const routeTabLabel: Record<RouteMode, string> = {
+    all: 'Full route',
+    approach: 'Approach',
+    spiti: 'Spiti core',
+    return: 'Return',
+  };
 
   return (
     <div className="app">
@@ -154,13 +186,13 @@ export default function TripPlannerPage() {
               <Mountain />
             </span>
             <span>
-              <strong>WINTER</strong>
-              <span className="brand-sub">HIMACHAL</span>
+              <strong>SPITI</strong>
+              <span className="brand-sub">TOUR 2026</span>
             </span>
           </a>
           <div className="nav-meta">
             <div className="nav-dates">
-              <CalendarDays size={15} /> 23 DEC ’26 — 03 JAN ’27
+                <CalendarDays size={15} /> {tripMeta.dates}
             </div>
             <SyncStatusBadge compact />
           </div>
@@ -185,13 +217,16 @@ export default function TripPlannerPage() {
                       className={routeMode === m ? 'on' : ''}
                       onClick={() => setRouteMode(m)}
                     >
-                      {m === 'all' ? 'Full route' : m === 'lahaul' ? 'Lahaul' : 'Parvati'}
+                      {routeTabLabel[m]}
                     </button>
                   ))}
                 </div>
                 <nav className="nav-core">
                   <a href="#map" onClick={closeNav}>
                     <Route size={15} /> Map
+                  </a>
+                  <a href="#planner" onClick={closeNav}>
+                    <CalendarDays size={15} /> Trip tables
                   </a>
                   <a href="#itinerary" onClick={closeNav}>
                     <CalendarDays size={15} /> Itinerary
@@ -293,59 +328,59 @@ export default function TripPlannerPage() {
           <HeroBg />
           <div className="hero-content">
             <div className="kicker">
-              <span /> YOUR PERSONAL WINTER ESCAPE
+              <span /> YOUR SPITI WINTER ROAD TRIP
             </div>
             <h1>
-              Winter<br />
-              <i>Himachal.</i>
+              Spiti<br />
+              <i>Tour 2026.</i>
             </h1>
             <p>
-              Snow-dusted valleys, quiet mountain villages and winding Himalayan roads. Explore your trip one stop at a
-              time.
+              Pune to Spiti via Shimla, Sangla, Kalpa, Kaza and Langza — then home through Kufri and Delhi. Edit the
+              live tables whenever the plan changes.
             </p>
             <div className="hero-meta">
               <span>
-                <CalendarDays /> 23 Dec 2026 — 03 Jan 2027
+                <CalendarDays /> {tripMeta.dates}
               </span>
               <span>
-                <MapPin /> Lahaul · Parvati Valley
+                <MapPin /> Kinnaur · Spiti
               </span>
             </div>
             <div className="hero-actions">
-              <a href="#itinerary" className="button light">
-                Explore itinerary <ArrowRight size={16} />
+              <a href="#planner" className="button light">
+                Edit trip tables <ArrowRight size={16} />
               </a>
               <a href="#map" className="button outline">
                 Open interactive map
               </a>
             </div>
           </div>
-          <div className="hero-index">HIMALAYAN WINTER / 01</div>
+          <div className="hero-index">SPITI TOUR / 01</div>
         </section>
         <section className="stats">
           <div className="stat">
             <CalendarDays />
             <small>TRIP DURATION</small>
-            <strong>12 days</strong>
+            <strong>{days.length} days</strong>
             <span>23 Dec — 03 Jan</span>
           </div>
           <div className="stat">
             <Mountain />
             <small>REGIONS</small>
-            <strong>2 valleys</strong>
-            <span>Lahaul + Parvati</span>
+            <strong>8 phases</strong>
+            <span>Kinnaur + Spiti</span>
           </div>
           <div className="stat">
             <Route />
             <small>ROUTE STOPS</small>
-            <strong>9 places</strong>
+            <strong>{places.length} places</strong>
             <span>Transit + overnight bases</span>
           </div>
           <div className="stat">
             <Plane />
             <small>FINAL FLIGHT</small>
-            <strong>SG105</strong>
-            <span>Delhi → Pune · 03 Jan</span>
+            <strong>AI9825</strong>
+            <span>DEL 22:10 → PNQ 00:30+1</span>
           </div>
         </section>
         <section id="map" className="section map-section">
@@ -400,10 +435,11 @@ export default function TripPlannerPage() {
             closures may differ from mapped roads — confirm locally before travel.
           </div>
         </section>
+        <ItineraryTables />
         <section id="itinerary" className="section">
           <div className="section-head">
             <div>
-              <div className="eyebrow">12 DAYS · 11 NIGHTS APPROX.</div>
+              <div className="eyebrow">{days.length} DAYS · SPITI TOUR 2026</div>
               <h2>Day by day, at your pace.</h2>
               <p>
                 Select a day to move the map route and open that day’s practical notes. Days with assigned tasks are
@@ -411,7 +447,7 @@ export default function TripPlannerPage() {
               </p>
             </div>
             <div className="small-counter">
-              {String(activeDay + 1).padStart(2, '0')} <span>/ 12</span>
+              {String(activeDay + 1).padStart(2, '0')} <span>/ {days.length}</span>
             </div>
           </div>
           <div className="itinerary-layout">
@@ -575,9 +611,9 @@ export default function TripPlannerPage() {
               <div className="transport-icon">
                 <CarFront />
               </div>
-              <div className="transport-kicker">PRIVATE TRANSFER · DRIVER DETAILS TO FILL</div>
-              <h3>Delhi ↔ Mountains</h3>
-              <p className="transport-name">Private traveller / driver</p>
+              <div className="transport-kicker">BUS + PRIVATE CAB · DRIVER DETAILS TO FILL</div>
+              <h3>Delhi ↔ Spiti loop</h3>
+              <p className="transport-name">Overnight bus + winter cab</p>
               <div className="editable-fields">
                 <label>
                   Driver name
@@ -593,20 +629,22 @@ export default function TripPlannerPage() {
                 </label>
                 <label>
                   Pickup notes
-                  <input placeholder="Pickup point or agreed stops" />
+                  <input placeholder="Bus boarding point / cab pickup notes" />
                 </label>
               </div>
               <button
                 className="button dark"
                 onClick={() =>
                   copy(
-                    'Private traveller details\nDriver: [to confirm]\nPhone: [to confirm]\nVehicle: [to confirm]\nPickup Delhi: 24 Dec 2026, 6:00 PM planned\nReturn from Kasol: 2 Jan 2027, time unconfirmed',
+                    `Spiti Tour road notes\nDriver: [to confirm]\nPhone: [to confirm]\nVehicle: [to confirm]\nDelhi → Shimla overnight bus: 24 Dec 2026\nCab loop: Shimla → Sangla → Kalpa → Kaza → return via Kalpa → Kufri\nKufri → Delhi airport: 3 Jan early morning\n\n${tripMeta.privateTransfer}`,
                   )
                 }
               >
                 <Copy size={15} /> Copy transfer checklist
               </button>
-              <p className="fineprint">Fields are for your notes only and are not saved to a server.</p>
+              <p className="fineprint">
+                Edit full booking rows in <a href="#planner">Trip tables</a>. These driver fields are local notes only.
+              </p>
             </article>
           </div>
         </section>
@@ -614,11 +652,11 @@ export default function TripPlannerPage() {
           <div className="flight-card">
             <div className="flight-top">
               <div>
-                <div className="eyebrow">FINAL JOURNEY · 03 JANUARY 2027</div>
+                <div className="eyebrow">FINAL JOURNEY · SUN 03 JAN 2027</div>
                 <h2>
                   Delhi <span>→</span> Pune
                 </h2>
-                <p>SpiceJet · SG105 · Direct flight</p>
+                <p>Air India AI9825 · Operated by Air India Express · Economy · 1 traveller</p>
               </div>
               <div className="flight-logo">
                 <Plane />
@@ -627,7 +665,7 @@ export default function TripPlannerPage() {
             <div className="flight-line">
               <div>
                 <small>DEPARTURE</small>
-                <strong>9:00 <i>PM</i></strong>
+                <strong>22:10</strong>
                 <b>DEL</b>
                 <span>Delhi Indira Gandhi International</span>
               </div>
@@ -637,34 +675,34 @@ export default function TripPlannerPage() {
                 <span />
               </div>
               <div className="flight-arrive">
-                <small>ARRIVAL · SAME DAY</small>
-                <strong>11:10 <i>PM</i></strong>
+                <small>ARRIVAL · NEXT DAY</small>
+                <strong>00:30 <i>+1</i></strong>
                 <b>PNQ</b>
-                <span>Pune Airport</span>
+                <span>Pune Airport · Mon 4 Jan 2027</span>
               </div>
             </div>
             <div className="flight-specs">
               <div>
                 <small>DURATION</small>
-                <b>2h 10m</b>
+                <b>2h 20m</b>
               </div>
               <div>
-                <small>AIRCRAFT</small>
-                <b>Boeing 737 narrowbody*</b>
+                <small>FLIGHT</small>
+                <b>AI9825 · Direct</b>
               </div>
               <div>
-                <small>SEATING</small>
-                <b>3–3 layout · 74 cm pitch*</b>
+                <small>CABIN</small>
+                <b>Economy · one way</b>
               </div>
               <div>
-                <small>ONBOARD</small>
-                <b>Light meal for fee · streaming*</b>
+                <small>BAGS</small>
+                <b>Cabin + checked*</b>
               </div>
             </div>
             <p className="fineprint">
-              *Aircraft and onboard details are user-provided and can change. Reconfirm flight schedule, terminal,
-              baggage allowance, check-in and operational status directly with SpiceJet. Flight details are not
-              live-verified.
+              *Reference fare seen around ₹8,316 (Flightnetwork / partners). Reconfirm schedule, terminal, baggage
+              allowance, check-in and status with Air India / Air India Express before travel. Arrival is early morning
+              on 4 Jan — not the same calendar day as departure.
             </p>
           </div>
         </section>
@@ -704,7 +742,7 @@ export default function TripPlannerPage() {
           </div>
         </section>
         <footer className="footer">
-          WINTER HIMACHAL <span>·</span> PERSONAL TRAVEL PLANNER <span>·</span> MAP DATA © OPENSTREETMAP CONTRIBUTORS
+          SPITI TOUR 2026 <span>·</span> PERSONAL TRAVEL PLANNER <span>·</span> MAP DATA © OPENSTREETMAP CONTRIBUTORS
         </footer>
       </main>
       <div id="assistant">

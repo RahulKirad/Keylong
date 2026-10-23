@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { tripMeta } from './tripData';
+import { getTripMeta } from './itineraryStore';
 import { listTravellerNames } from './travellerBrief';
 import { getIdProof, idTypeLabel, type IdProof } from './idProofStore';
 
@@ -84,12 +84,12 @@ export function downloadBulkIdProofPdf(): void {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(23, 56, 75);
-  doc.text('Winter Himachal — Group ID proof list', 14, y);
+  doc.text('Spiti Tour 2026 — Group ID proof list', 14, y);
   y += 7;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.setTextColor(60, 80, 88);
-  doc.text(`${tripMeta.dates} · Full roster for hotel check-in`, 14, y);
+  doc.text(`${getTripMeta().dates} · Full roster for hotel check-in`, 14, y);
   y += 6;
   doc.text(`Generated ${new Date().toLocaleString('en-IN')} · ${roster.length} travellers`, 14, y);
   y += 10;
@@ -191,8 +191,8 @@ export function downloadBulkIdProofPdf(): void {
     doc.setPage(page);
     doc.setFontSize(8);
     doc.setTextColor(120, 132, 136);
-    doc.text(`Winter Himachal · Group ID list · page ${page} of ${pageCount}`, 14, 290);
+    doc.text(`Spiti Tour 2026 · Group ID list · page ${page} of ${pageCount}`, 14, 290);
   }
 
-  doc.save('winter-himachal-group-id-proofs.pdf');
+  doc.save('spiti-tour-2026-group-id-proofs.pdf');
 }

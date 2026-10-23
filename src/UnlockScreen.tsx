@@ -38,7 +38,7 @@ export default function UnlockScreen({ onUnlocked }: Props) {
             <Mountain />
           </span>
           <div>
-            <strong>WINTER HIMACHAL</strong>
+            <strong>SPITI TOUR 2026</strong>
             <span>Trip unlock</span>
           </div>
         </div>

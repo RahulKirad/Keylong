@@ -8,12 +8,12 @@ import {
   resolveAssigneeFromText,
   resolveTripDayFromText,
 } from './assignmentStore';
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
 import { seedDefaultTravellersIfNeeded } from './travellerSeed';
 
 export type ParsedAssignment = AssignmentInput;
 
-const ASSIGN_JSON = `You extract ONE trip task assignment from the user's message for Winter Himachal (23 Dec 2026 – 3 Jan 2027).
+const ASSIGN_JSON = `You extract ONE trip task assignment from the user's message for Spiti Tour 2026 (23 Dec 2026 – 3 Jan 2027).
 Travellers: {{MEMBERS}}
 Trip days: {{DAYS}}
 
@@ -112,7 +112,7 @@ export async function parseAssignmentUtterance(
   seedDefaultTravellersIfNeeded();
   const { members } = getExpenseState();
   const memberNames = members.map((m) => m.name).join(', ');
-  const dayRef = days.map((d) => `Day ${d.day}: ${d.date} — ${d.title}`).join('; ');
+  const dayRef = getDays().map((d) => `Day ${d.day}: ${d.date} — ${d.title}`).join('; ');
   const prompt = `${ASSIGN_JSON.replace('{{MEMBERS}}', memberNames).replace('{{DAYS}}', dayRef)}\n\nUser: "${text}"`;
 
   try {
@@ -138,7 +138,7 @@ export async function parseAssignmentUtterance(
         dateLabel = day.dateLabel;
       }
     } else {
-      const d = days.find((x) => x.day === tripDayNumber);
+      const d = getDays().find((x) => x.day === tripDayNumber);
       if (d) dateLabel = d.date;
     }
 

@@ -43,7 +43,7 @@ import { addExpense, addFundTransfer, getExpenseState, queuePendingUtterance } f
 import { memberBalanceRemaining } from './expenseLedger';
 import { parseMoneyUtterance } from './expenseParse';
 import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
 import {
   briefForName,
   formatPersonalReply,
@@ -101,10 +101,10 @@ function stopSpeaking() {
 }
 
 const TRIP_WELCOME =
-  'Hi! I’m your **Winter Himachal** trip assistant. Ask about days, places, transport, or packing. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
+  'Hi! I’m your **Spiti Tour 2026** trip assistant. Ask about days, places, transport, or packing. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
 
 const ASSIGNMENTS_WELCOME =
-  '**Assign tasks** — say who should do what, e.g. “Rahul is assigned to book the train tickets for 23rd” or “Sanket will confirm Kasol stay for 30 Dec”. I’ll add it to **Assignments** and highlight that day in the **itinerary**.';
+  '**Assign tasks** — say who should do what, e.g. “Rahul is assigned to book the train tickets for 23rd” or “Sanket will confirm Kaza stay for 31 Dec”. I’ll add it to **Assignments** and highlight that day in the **itinerary**.';
 
 function welcomeForMode(m: AssistantMode, name: string): string {
   const expense = `**Log expense** is for **${name}**. Say the date, what was bought, and the amount — for example “25 Dec dinner 2000 cash”. I will record it as paid by **${name}**. To hand someone cash, say “gave 5000 cash to another traveller”.`;
@@ -342,7 +342,7 @@ export default function TripAssistant() {
               ? 'Online'
               : 'Payment not specified';
         return {
-          text: `Recorded money given\n\n• **${parsed.fromPersonName}** → **${parsed.toPersonName}**\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')} (${pay})\n• **${parsed.toPersonName}'s balance** to spend: **₹${left.toLocaleString('en-IN')}**\n\nSee the traveller table on **Winter Himachal Expenses**.`,
+          text: `Recorded money given\n\n• **${parsed.fromPersonName}** → **${parsed.toPersonName}**\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')} (${pay})\n• **${parsed.toPersonName}'s balance** to spend: **₹${left.toLocaleString('en-IN')}**\n\nSee the traveller table on **Spiti Tour Expenses**.`,
         };
       }
       const record = addExpense(parsed);
@@ -361,7 +361,7 @@ export default function TripAssistant() {
       }
       const givenLine = record.givenByName ? `\n• **Originally from:** ${record.givenByName}` : '';
       return {
-        text: `Recorded expense\n\n• **${record.dateLabel}** — ${record.description}\n• **Amount:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})\n• **Paid by:** ${record.paidByName}\n• **Category:** ${record.category}${balanceLine}${givenLine}\n\nUpdated on **Winter Himachal Expenses**.`,
+        text: `Recorded expense\n\n• **${record.dateLabel}** — ${record.description}\n• **Amount:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})\n• **Paid by:** ${record.paidByName}\n• **Category:** ${record.category}${balanceLine}${givenLine}\n\nUpdated on **Spiti Tour Expenses**.`,
       };
     } catch (e) {
       if (!online) {
@@ -379,7 +379,7 @@ export default function TripAssistant() {
     const parsed = await parseAssignmentUtterance(trimmed, config, online);
     const record = addAssignment(parsed);
     const dayTitle =
-      record.tripDayNumber != null ? days.find((d) => d.day === record.tripDayNumber)?.title : undefined;
+      record.tripDayNumber != null ? getDays().find((d) => d.day === record.tripDayNumber)?.title : undefined;
     const dayLine = record.tripDayNumber != null
       ? `\n• **Itinerary:** Day ${record.tripDayNumber}${dayTitle ? ` — ${dayTitle}` : ''} (${record.dateLabel || 'linked'})`
       : '\n• **Itinerary:** not linked to a specific day (edit on Assignments page if needed)';

@@ -456,7 +456,7 @@ async function startServer() {
   }
 
   app.listen(PORT, HOST, () => {
-    console.log(`Winter Himachal Universal Cloud Server running at http://${HOST}:${PORT}`);
+    console.log(`Spiti Tour 2026 Universal Cloud Server running at http://${HOST}:${PORT}`);
   });
 }
 

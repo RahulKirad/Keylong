@@ -157,7 +157,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
     const blob = new Blob([exportExpensesCsv()], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'winter-himachal-expenses.csv';
+    a.download = 'spiti-tour-2026-expenses.csv';
     a.click();
   }
 
@@ -191,7 +191,7 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
       <div className="section-head">
         <div>
           <div className="eyebrow">GROUP TRIP MONEY</div>
-          <h2>{standalone ? 'Winter Himachal Expenses' : 'Shared expenses tally.'}</h2>
+          <h2>{standalone ? 'Spiti Tour Expenses' : 'Shared expenses tally.'}</h2>
           <p>
             {focusName
               ? `Showing money for ${focusName}. Log expense records new spends as paid by ${focusName}.`
