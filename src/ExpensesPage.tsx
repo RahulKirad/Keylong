@@ -5,11 +5,11 @@ import ExpensesSection from './ExpensesSection';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
 
-const TRIP_TITLE = 'Winter Himachal | Interactive Journey';
+const TRIP_TITLE = 'Spiti Tour 2026 | Interactive Journey';
 
 export default function ExpensesPage() {
   useEffect(() => {
-    document.title = 'Winter Himachal Expenses';
+    document.title = 'Spiti Tour Expenses';
     return () => {
       document.title = TRIP_TITLE;
     };
@@ -24,13 +24,13 @@ export default function ExpensesPage() {
               <Mountain />
             </span>
             <span>
-              <strong>WINTER</strong>
-              <span className="brand-sub">HIMACHAL</span>
+              <strong>SPITI</strong>
+              <span className="brand-sub">TOUR 2026</span>
             </span>
           </Link>
           <div className="expenses-page-title">
             <Wallet size={16} />
-            Winter Himachal Expenses
+            Spiti Tour Expenses
           </div>
         </div>
         <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -43,7 +43,7 @@ export default function ExpensesPage() {
       <main className="main expenses-page-main">
         <ExpensesSection standalone />
         <footer className="footer">
-          WINTER HIMACHAL EXPENSES <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
+          SPITI TOUR EXPENSES <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
         </footer>
       </main>
       <div id="assistant">

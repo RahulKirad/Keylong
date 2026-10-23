@@ -10,13 +10,13 @@ import {
   getExpenseState,
   parseDateFromText,
 } from './expenseStore';
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
 
 export type ParsedExpense = ExpenseInput & { kind: 'expense' };
 export type ParsedGiveMoney = FundTransferInput & { kind: 'give' };
 export type ParsedMoneyAction = ParsedExpense | ParsedGiveMoney;
 
-const MONEY_JSON_INSTRUCTION = `You extract ONE money action from the user's message for a Winter Himachal group trip.
+const MONEY_JSON_INSTRUCTION = `You extract ONE money action from the user's message for a Spiti Tour 2026 group trip.
 Known travellers (use exact name if match): {{MEMBERS}}
 Trip days: {{DAYS}}
 
@@ -294,7 +294,7 @@ export async function parseMoneyUtterance(
 
   const { members } = getExpenseState();
   const memberNames = members.map((m) => m.name).join(', ') || '(none yet — infer name from speech)';
-  const dayRef = days.map((d) => `Day ${d.day} ${d.date}`).join('; ');
+  const dayRef = getDays().map((d) => `Day ${d.day} ${d.date}`).join('; ');
   const speaker = actingAs
     ? `\nThe traveller logging this is ${actingAs}. Record purchases as paid by ${actingAs}. Record "gave X to someone" as from ${actingAs}.`
     : '';

@@ -1,4 +1,5 @@
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
+import type { Day } from './tripData';
 import { memberBalanceRemaining } from './expenseLedger';
 import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
 import { registerTravellerSeeder } from './travellerSeed';
@@ -60,9 +61,7 @@ export type ExpenseStoreState = {
   pending: PendingExpenseUtterance[];
 };
 
-const dayByNumber = new Map(days.map((d) => [d.day, d]));
-
-function dateFromDayRecord(d: (typeof days)[0]): { tripDate: string; dateLabel: string } {
+function dateFromDayRecord(d: Day): { tripDate: string; dateLabel: string } {
   const jan = d.date.match(/(\d{1,2})\s*Jan/i);
   if (jan) {
     const day = jan[1].padStart(2, '0');
@@ -176,7 +175,7 @@ export function subscribeExpenses(cb: () => void): () => void {
 }
 
 export function resolveTripDate(dayNum: number): { tripDate: string; dateLabel: string } {
-  const d = dayByNumber.get(dayNum);
+  const d = getDays().find((day) => day.day === dayNum);
   if (d) return dateFromDayRecord(d);
   return { tripDate: '2026-12-25', dateLabel: '25 Dec' };
 }
@@ -186,7 +185,7 @@ export function parseDateFromText(text: string): { tripDate: string; dateLabel: 
   const dayRef = lower.match(/\bday\s*(\d{1,2})\b/);
   if (dayRef) return resolveTripDate(parseInt(dayRef[1], 10));
 
-  for (const d of days) {
+  for (const d of getDays()) {
     const dec = d.date.match(/(\d{1,2})\s*Dec/i);
     if (dec && lower.includes(`${dec[1]} dec`)) return dateFromDayRecord(d);
     const jan = d.date.match(/(\d{1,2})\s*Jan/i);

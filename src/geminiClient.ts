@@ -4,8 +4,6 @@ import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_IDS, isLocalDevHost } from './gemini
 
 export type ChatTurn = { role: 'user' | 'model'; text: string };
 
-const knowledge = buildTripKnowledgeDocument();
-
 const CHAT_MODEL_BLOCK =
   /embed|tts|live|image|imagen|aqa|computer|nano-banana|vision-only|preview-tts/i;
 
@@ -71,7 +69,7 @@ async function generateWithModel(
     },
     body: JSON.stringify({
       system_instruction: {
-        parts: [{ text: ASSISTANT_SYSTEM_PROMPT + knowledge }],
+        parts: [{ text: ASSISTANT_SYSTEM_PROMPT + buildTripKnowledgeDocument() }],
       },
       contents,
       generationConfig: {
@@ -113,7 +111,7 @@ export async function sendToGemini(
           history,
           userMessage,
           model: config.model?.trim() || DEFAULT_GEMINI_MODEL,
-          systemInstruction: ASSISTANT_SYSTEM_PROMPT + knowledge,
+          systemInstruction: ASSISTANT_SYSTEM_PROMPT + buildTripKnowledgeDocument(),
         }),
       });
       if (res.ok) {

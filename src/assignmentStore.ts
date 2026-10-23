@@ -1,4 +1,4 @@
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
 import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
 import { findMemberByName, getExpenseState } from './expenseStore';
 import { seedDefaultTravellersIfNeeded } from './travellerSeed';
@@ -83,29 +83,29 @@ export function resolveTripDayFromText(text: string): { tripDayNumber: number; d
   const dayRef = lower.match(/\bday\s*(\d{1,2})\b/);
   if (dayRef) {
     const n = parseInt(dayRef[1], 10);
-    const d = days.find((x) => x.day === n);
+    const d = getDays().find((x) => x.day === n);
     if (d) return { tripDayNumber: d.day, dateLabel: d.date };
   }
 
   const ord = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/);
   if (ord) {
     const num = parseInt(ord[1], 10);
-    for (const d of days) {
+    for (const d of getDays()) {
       if (d.date.includes(`${num} Dec`) || d.date.includes(`${num} Jan`)) {
         return { tripDayNumber: d.day, dateLabel: d.date };
       }
     }
     if (num >= 23 && num <= 31) {
-      const d = days.find((x) => x.date.toLowerCase().includes(`${num} dec`));
+      const d = getDays().find((x) => x.date.toLowerCase().includes(`${num} dec`));
       if (d) return { tripDayNumber: d.day, dateLabel: d.date };
     }
     if (num >= 1 && num <= 3) {
-      const d = days.find((x) => x.date.toLowerCase().includes(`${num} jan`));
+      const d = getDays().find((x) => x.date.toLowerCase().includes(`${num} jan`));
       if (d) return { tripDayNumber: d.day, dateLabel: d.date };
     }
   }
 
-  for (const d of days) {
+  for (const d of getDays()) {
     const dec = d.date.match(/(\d{1,2})\s*Dec/i);
     if (dec && lower.includes(`${dec[1]} dec`)) return { tripDayNumber: d.day, dateLabel: d.date };
     const jan = d.date.match(/(\d{1,2})\s*Jan/i);

@@ -13,7 +13,7 @@ import {
 import { getExpenseState, subscribeExpenses } from './expenseStore';
 import { openTripAssistant } from './assistantBridge';
 import TravellerAssignmentGrid from './TravellerAssignmentGrid';
-import { days } from './tripData';
+import { getDays } from './itineraryStore';
 
 export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState(allAssignments());
@@ -26,9 +26,9 @@ export default function AssignmentsPage() {
   };
 
   useEffect(() => {
-    document.title = 'Winter Himachal — Assignments';
+    document.title = 'Spiti Tour 2026 — Assignments';
     return () => {
-      document.title = 'Winter Himachal | Interactive Journey';
+      document.title = 'Spiti Tour 2026 | Interactive Journey';
     };
   }, []);
 
@@ -63,8 +63,8 @@ export default function AssignmentsPage() {
           <Link to="/" className="nav-brand">
             <span className="brand-logo"><Mountain /></span>
             <span>
-              <strong>WINTER</strong>
-              <span className="brand-sub">HIMACHAL</span>
+              <strong>SPITI</strong>
+              <span className="brand-sub">TOUR 2026</span>
             </span>
           </Link>
           <div className="expenses-page-title">
@@ -145,7 +145,7 @@ export default function AssignmentsPage() {
           </div>
         </section>
         <footer className="footer">
-          WINTER HIMACHAL ASSIGNMENTS <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
+          SPITI TOUR ASSIGNMENTS <span>·</span> UNIVERSAL CLOUD DATABASE <span>·</span> REAL-TIME MULTI-DEVICE SYNC
         </footer>
       </main>
 
@@ -183,7 +183,7 @@ export default function AssignmentsPage() {
                 value={editing.tripDayNumber ?? ''}
                 onChange={(e) => {
                   const n = e.target.value ? parseInt(e.target.value, 10) : undefined;
-                  const d = n ? days.find((x) => x.day === n) : undefined;
+                  const d = n ? getDays().find((x) => x.day === n) : undefined;
                   setEditing({
                     ...editing,
                     tripDayNumber: n,
@@ -192,7 +192,7 @@ export default function AssignmentsPage() {
                 }}
               >
                 <option value="">Not linked to a day</option>
-                {days.map((d) => (
+                {getDays().map((d) => (
                   <option key={d.day} value={d.day}>Day {d.day} — {d.date}</option>
                 ))}
               </select>

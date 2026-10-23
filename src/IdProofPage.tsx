@@ -16,7 +16,7 @@ import {
 } from './idProofStore';
 import { downloadBulkIdProofPdf, listIdRoster, type IdRosterRow } from './idProofBulkPdf';
 
-const TRIP_TITLE = 'Winter Himachal | Interactive Journey';
+const TRIP_TITLE = 'Spiti Tour 2026 | Interactive Journey';
 
 function documentLabel(proof?: IdProof): string {
   if (!proof?.fileDataUrl) return 'No file';
@@ -43,7 +43,7 @@ export default function IdProofPage() {
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
-    document.title = 'Winter Himachal — ID proof';
+    document.title = 'Spiti Tour 2026 — ID proof';
     return () => {
       document.title = TRIP_TITLE;
     };
@@ -142,8 +142,8 @@ export default function IdProofPage() {
               <Mountain />
             </span>
             <span>
-              <strong>WINTER</strong>
-              <span className="brand-sub">HIMACHAL</span>
+              <strong>SPITI</strong>
+              <span className="brand-sub">TOUR 2026</span>
             </span>
           </Link>
           <div className="expenses-page-title">
