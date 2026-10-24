@@ -4,6 +4,8 @@ import TripPlannerPage from './TripPlannerPage';
 import ExpensesPage from './ExpensesPage';
 import AssignmentsPage from './AssignmentsPage';
 import IdProofPage from './IdProofPage';
+import TemperaturePage from './TemperaturePage';
+import TripTablesPage from './TripTablesPage';
 import NavigationBridge from './NavigationBridge';
 import UnlockScreen from './UnlockScreen';
 import { isAppUnlocked } from './tripUnlock';
@@ -34,6 +36,8 @@ export default function App() {
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/assignments" element={<AssignmentsPage />} />
         <Route path="/id-proof" element={<IdProofPage />} />
+        <Route path="/temperature" element={<TemperaturePage />} />
+        <Route path="/trip-tables" element={<TripTablesPage />} />
       </Routes>
     </BrowserRouter>
   );

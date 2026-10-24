@@ -11,6 +11,8 @@ export type StoredChatMessage = {
   assignmentsLink?: boolean;
   idLink?: boolean;
   pdfTopics?: PersonalTopic[];
+  /** Offer a trip PDF download button in chat (does not auto-download). */
+  pdfOffer?: 'itinerary' | 'transport' | 'safety' | 'places' | 'full';
 };
 
 export type ChatThread = {

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Bot,
   Mic,
   MicOff,
   Send,
@@ -43,7 +42,7 @@ import { addExpense, addFundTransfer, getExpenseState, queuePendingUtterance } f
 import { memberBalanceRemaining } from './expenseLedger';
 import { parseMoneyUtterance } from './expenseParse';
 import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
-import { getDays } from './itineraryStore';
+import { getDays, subscribeItinerary } from './itineraryStore';
 import {
   briefForName,
   formatPersonalReply,
@@ -60,8 +59,42 @@ import {
   saveChatThread,
   type StoredChatMessage,
 } from './chatHistoryStore';
+import { formatLiveScheduleReply, wantsLiveScheduleAnswer } from './liveScheduleAnswers';
+import {
+  formatLiveIdReply,
+  tryUpdateIdFromChat,
+  wantsIdAnswer,
+} from './liveIdProofAnswers';
+import { subscribeIdProofs } from './idProofStore';
+import { isTripRelatedQuestion, TRIP_SCOPE_REFUSAL } from './tripScope';
+import { formatLiveStayReply, wantsStayAnswer } from './liveStayAnswers';
 
 type Message = StoredChatMessage;
+
+/** Compact professional mark for the trip assistant FAB / panel. */
+function AssistantMark({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect x="2" y="4" width="28" height="20" rx="6" stroke="currentColor" strokeWidth="2" />
+      <path d="M10 24 L8 28 L14 24" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path
+        d="M8 17.5 L13 11 L16.5 14.5 L20 9.5 L24 17.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="20" cy="9.5" r="1.4" fill="currentColor" />
+    </svg>
+  );
+}
 
 const ASK_NAME =
   'Who are you on this trip? Tap your name above the message box. The chat starts after that.';
@@ -109,7 +142,7 @@ const ASSIGNMENTS_WELCOME =
 function welcomeForMode(m: AssistantMode, name: string): string {
   const expense = `**Log expense** is for **${name}**. Say the date, what was bought, and the amount — for example “25 Dec dinner 2000 cash”. I will record it as paid by **${name}**. To hand someone cash, say “gave 5000 cash to another traveller”.`;
   const trip =
-    'Ask about days, places, packing, **your** tasks and spending, or anyone else’s work — e.g. “What is Sanket assigned?” or “Show Allen’s expenses”.';
+    'I only answer **Spiti Tour 2026** questions — days, places, train/flight, packing, temperature, **your** tasks and spending. Example: “What is Sanket assigned?” or “Show Allen’s expenses”. Off-topic questions are declined.';
   const body = m === 'expense' ? expense : m === 'assignments' ? ASSIGNMENTS_WELCOME : trip;
   return `Hi **${name}**. This login stays on your name.\n\n${body}`;
 }
@@ -199,6 +232,41 @@ export default function TripAssistant() {
     if (skipPersistRef.current || !selectedName) return;
     saveChatThread(selectedName, mode, messages, historyRef.current);
   }, [messages, mode, selectedName]);
+
+  useEffect(
+    () =>
+      subscribeItinerary(() => {
+        // Drop Gemini memory so old train/flight answers cannot override Trip tables.
+        historyRef.current = [];
+        setMessages((current) => {
+          const notice = {
+            id: `itinerary-sync-${Date.now()}`,
+            role: 'assistant' as const,
+            text: 'Trip tables were **updated**. I’ll use the new schedule, train and flight details from now on. Ask again if you need the latest train info.',
+          };
+          const withoutOldSync = current.filter((msg) => !msg.id.startsWith('itinerary-sync-'));
+          return [...withoutOldSync, notice];
+        });
+      }),
+    [],
+  );
+
+  useEffect(
+    () =>
+      subscribeIdProofs(() => {
+        historyRef.current = [];
+        setMessages((current) => {
+          const notice = {
+            id: `id-sync-${Date.now()}`,
+            role: 'assistant' as const,
+            text: 'Your **ID proof** was updated. Ask “show my ID proof” to see the latest details.',
+          };
+          const withoutOld = current.filter((msg) => !msg.id.startsWith('id-sync-'));
+          return [...withoutOld, notice];
+        });
+      }),
+    [],
+  );
 
   const applySelectedName = (name: string) => {
     if (selectedNameRef.current === name) return;
@@ -316,13 +384,21 @@ export default function TripAssistant() {
     setSettingsOpen(false);
   };
 
-  const runPdf = (kind: PdfKind) => {
+  const runPdf = (kind: PdfKind, announce = true) => {
     downloadTripPdf(kind);
+    if (!announce) return;
     setMessages((m) => [
       ...m,
-      { id: `pdf-${Date.now()}`, role: 'assistant', text: `Downloaded **${kind}** PDF to your device.` },
+      {
+        id: `pdf-${Date.now()}`,
+        role: 'assistant',
+        text: `Saved the **${kind}** PDF to your device.`,
+      },
     ]);
   };
+
+  const userAskedForPdf = (text: string) =>
+    /\b(download|pdf|export|print)\b/i.test(text);
 
   const handleExpenseUtterance = async (
     trimmed: string,
@@ -422,6 +498,28 @@ export default function TripAssistant() {
           return;
         }
 
+        if (wantsIdAnswer(trimmed)) {
+          const updated = tryUpdateIdFromChat(trimmed, person);
+          const reply = updated.ok ? updated.reply : formatLiveIdReply(person);
+          historyRef.current = [
+            ...historyRef.current,
+            { role: 'user' as const, text: trimmed },
+            { role: 'model' as const, text: reply },
+          ].slice(-20);
+          setMessages((m) => [
+            ...m,
+            {
+              id: `a-${Date.now()}`,
+              role: 'assistant',
+              text: reply,
+              idLink: true,
+            },
+          ]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
         const askedTopics = topicsFromQuestion(trimmed);
         const subject = personFromQuestion(trimmed, person);
         const loggingRecord = /\b(is assigned|will |should |paid by|rupees|rs\.?\s*\d|\d+\s*(rupee|inr))\b/i.test(trimmed);
@@ -471,20 +569,69 @@ export default function TripAssistant() {
           return;
         }
 
+        if (wantsLiveScheduleAnswer(trimmed)) {
+          const reply = formatLiveScheduleReply(trimmed);
+          historyRef.current = [
+            ...historyRef.current,
+            { role: 'user' as const, text: trimmed },
+            { role: 'model' as const, text: reply },
+          ].slice(-20);
+          setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: reply }]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
+        if (wantsStayAnswer(trimmed)) {
+          const reply = formatLiveStayReply(trimmed);
+          historyRef.current = [
+            ...historyRef.current,
+            { role: 'user' as const, text: trimmed },
+            { role: 'model' as const, text: reply },
+          ].slice(-20);
+          setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', text: reply }]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
+        if (!isTripRelatedQuestion(trimmed)) {
+          historyRef.current = [
+            ...historyRef.current,
+            { role: 'user' as const, text: trimmed },
+            { role: 'model' as const, text: TRIP_SCOPE_REFUSAL },
+          ].slice(-20);
+          setMessages((m) => [
+            ...m,
+            { id: `a-${Date.now()}`, role: 'assistant', text: TRIP_SCOPE_REFUSAL },
+          ]);
+          if (voiceMode && config.voiceEnabled) speak(TRIP_SCOPE_REFUSAL, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
         const { text: reply, modelUsed } = await sendToGemini(
           config,
           historyRef.current,
-          `The traveller speaking is ${person}. If they ask about tasks, expenses, or spending, answer only for ${person}.\n\n${trimmed}`,
+          [
+            `SCOPE: Answer only Spiti Tour 2026 trip topics. If this message is unrelated, refuse and steer back to the trip.`,
+            `The traveller speaking is ${person}. If they ask about tasks, expenses, or spending, answer only for ${person}.`,
+            `Prefer LIVE schedule/TRAIN/FLIGHT fields over any older chat turns.`,
+            '',
+            trimmed,
+          ].join('\n'),
           modelOptions.map((m) => m.id),
         );
+        const { displayText, pdfKind } = parseAssistantReply(reply);
         historyRef.current = [
           ...historyRef.current,
           { role: 'user' as const, text: trimmed },
-          { role: 'model' as const, text: reply },
+          { role: 'model' as const, text: displayText },
         ].slice(-20);
 
-        const { displayText, pdfKind } = parseAssistantReply(reply);
-        if (pdfKind) runPdf(pdfKind);
+        // Never auto-download from chat answers — show an in-chat button instead.
+        const offerPdf =
+          pdfKind || (userAskedForPdf(trimmed) ? ('full' as const) : null);
 
         const meta =
           modelUsed !== config.model ? `Used ${modelUsed} (primary model was busy)` : undefined;
@@ -497,6 +644,7 @@ export default function TripAssistant() {
             text: displayText,
             meta,
             expensesLink: wantsExpensesNav(displayText, trimmed),
+            pdfOffer: offerPdf || undefined,
           },
         ]);
         if (voiceMode && config.voiceEnabled) speak(displayText, config.voiceLang);
@@ -586,14 +734,16 @@ export default function TripAssistant() {
         aria-label="AI assistant"
         onClick={() => setOpen((o) => !o)}
       >
-        {open ? <X size={24} /> : <Bot size={24} />}
+        {open ? <X size={22} strokeWidth={2.25} /> : <AssistantMark size={24} />}
       </button>
 
       {open && (
         <div className="assistant-panel assistant-panel-lg" role="dialog" aria-modal="true" aria-label="AI assistant">
           <header className="assistant-head">
             <div className="assistant-head-title">
-              <span className="assistant-symbol" aria-hidden="true"><Bot size={22} /></span>
+              <span className="assistant-symbol" aria-hidden="true">
+                <AssistantMark size={20} />
+              </span>
               <div>
                 <strong>
                   {mode === 'expense'
@@ -680,6 +830,15 @@ export default function TripAssistant() {
                 {msg.role === 'assistant' && msg.expensesLink && (
                   <button type="button" className="assistant-goto-expenses" onClick={() => goToExpensesPage(true)}>
                     Open expenses list <ArrowRight size={14} />
+                  </button>
+                )}
+                {msg.role === 'assistant' && msg.pdfOffer && (
+                  <button
+                    type="button"
+                    className="assistant-goto-expenses"
+                    onClick={() => runPdf(msg.pdfOffer!, true)}
+                  >
+                    <Download size={14} /> Download {msg.pdfOffer} PDF
                   </button>
                 )}
                 {msg.role === 'assistant' && msg.pdfTopics && msg.pdfTopics.length > 0 && selectedName && (

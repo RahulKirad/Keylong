@@ -227,10 +227,11 @@ export function formatPersonalReply(
         `**ID proof**\n\n• ${who}'s ID stays private. Only ${who} can open it after logging in as that name.`,
       );
     } else {
-      const proof = brief.identity;
+      // Always re-read storage so chat shows edits made on the ID proof page.
+      const proof = getIdProof(brief.name) || brief.identity;
       if (!proof) {
         blocks.push(
-          '**ID proof**\n\n• Nothing saved yet. Open **ID proof** and add the Aadhaar number or a photo of the card.',
+          '**ID proof**\n\n• Nothing saved yet. Open **ID proof**, edit your details, and tap **Update ID proof**.',
         );
       } else {
         const lines = [
@@ -241,9 +242,10 @@ export function formatPersonalReply(
           proof.fileDataUrl
             ? '• A photo or PDF of the card is saved on this phone.'
             : '• No card photo saved yet.',
+          `• **Last updated:** ${new Date(proof.updatedAt).toLocaleString('en-IN')}`,
         ].filter(Boolean);
         blocks.push(
-          `**ID proof**\n\n${lines.join('\n')}\n\nOpen the check-in card when the hotel asks to see it.`,
+          `**ID proof** (live from this phone)\n\n${lines.join('\n')}\n\nEdit on the **ID proof** page anytime — ask again here to confirm the new details.`,
         );
       }
     }
