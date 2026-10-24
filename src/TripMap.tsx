@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { CarFront, Play, Square } from 'lucide-react';
 import { bearingAlongPath, fetchRoadRoute, LatLng, pointAlongPath } from './routeUtils';
+import { TRIP_MAP_TILES } from './mapTiles';
 
 export type MapPlace = {
   id: string;
@@ -10,7 +11,17 @@ export type MapPlace = {
   lat: number;
   lng: number;
   kind: string;
+  stayType?: string;
+  stayName?: string;
 };
+
+function stayLabel(place: MapPlace): string | null {
+  const name = place.stayName?.trim();
+  if (!name) return null;
+  const type = place.stayType?.trim();
+  if (type) return `${type}: ${name}`;
+  return name;
+}
 
 const pinIcon = L.divIcon({
   className: 'custom-pin',
@@ -142,8 +153,9 @@ export default function TripMap({ waypoints, places, onSelectPlace }: TripMapPro
     <div className="map-frame">
       <MapContainer center={[32.3, 77.15]} zoom={7} scrollWheelZoom className="leaflet-map">
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution={TRIP_MAP_TILES.attribution}
+          url={TRIP_MAP_TILES.url}
+          maxZoom={TRIP_MAP_TILES.maxZoom}
         />
         <FitBounds points={displayPath.length ? displayPath : waypoints} />
         {displayPath.length > 1 && (
@@ -163,29 +175,50 @@ export default function TripMap({ waypoints, places, onSelectPlace }: TripMapPro
           />
         )}
         <VehicleLayer path={roadPath} playing={playing} onDone={() => setPlaying(false)} />
-        {places.map((p) => (
-          <Marker
-            key={p.id}
-            position={[p.lat, p.lng]}
-            icon={pinIcon}
-            eventHandlers={{
-              click: () => {
-                onSelectPlace(p.id);
-                startDrive();
-              },
-            }}
-          >
-            <Popup>
-              <b>{p.name}</b>
-              <br />
-              {p.kind}
-              <br />
-              <button type="button" onClick={() => onSelectPlace(p.id)}>Trip details</button>
-              <br />
-              <button type="button" onClick={() => startDrive()}>Drive route</button>
-            </Popup>
-          </Marker>
-        ))}
+        {places.map((p) => {
+          const stay = stayLabel(p);
+          return (
+            <Marker
+              key={p.id}
+              position={[p.lat, p.lng]}
+              icon={pinIcon}
+              eventHandlers={{
+                click: () => {
+                  onSelectPlace(p.id);
+                  startDrive();
+                },
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -12]} opacity={1} sticky>
+                <div className="map-pin-tooltip">
+                  <strong>{p.name}</strong>
+                  <span>{p.kind}</span>
+                  {stay ? <span className="map-pin-stay">{stay}</span> : <span className="map-pin-stay muted">Stay not set yet</span>}
+                </div>
+              </Tooltip>
+              <Popup>
+                <b>{p.name}</b>
+                <br />
+                {p.kind}
+                <br />
+                {stay ? (
+                  <>
+                    <b>Stay:</b> {stay}
+                    <br />
+                  </>
+                ) : (
+                  <>
+                    Stay / hotel name not set yet (add it in Trip tables).
+                    <br />
+                  </>
+                )}
+                <button type="button" onClick={() => onSelectPlace(p.id)}>Trip details</button>
+                <br />
+                <button type="button" onClick={() => startDrive()}>Drive route</button>
+              </Popup>
+            </Marker>
+          );
+        })}
       </MapContainer>
       <div className="map-toolbar">
         <button

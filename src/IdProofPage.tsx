@@ -41,6 +41,8 @@ export default function IdProofPage() {
   const [showing, setShowing] = useState(() => new URLSearchParams(window.location.search).get('show') === '1');
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     document.title = 'Spiti Tour 2026 — ID proof';
@@ -70,6 +72,8 @@ export default function IdProofPage() {
     setFileDataUrl(saved?.fileDataUrl);
     setFileName(saved?.fileName);
     setError('');
+    setDirty(false);
+    setSavedFlash(false);
   }, [focusName]);
 
   async function onFile(file: File | undefined) {
@@ -79,9 +83,16 @@ export default function IdProofPage() {
       const loaded = await readProofFile(file);
       setFileDataUrl(loaded.dataUrl);
       setFileName(loaded.fileName);
+      setDirty(true);
+      setSavedFlash(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not use that file.');
     }
+  }
+
+  function markDirty() {
+    setDirty(true);
+    setSavedFlash(false);
   }
 
   function save() {
@@ -101,7 +112,10 @@ export default function IdProofPage() {
       });
       setProof(saved);
       setError('');
-      setShowing(true);
+      setDirty(false);
+      setSavedFlash(true);
+      setShowing(false);
+      window.setTimeout(() => setSavedFlash(false), 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save.');
     }
@@ -117,6 +131,8 @@ export default function IdProofPage() {
     setFileDataUrl(undefined);
     setFileName(undefined);
     setShowing(false);
+    setDirty(false);
+    setSavedFlash(false);
   }
 
   const image = fileDataUrl?.startsWith('data:image');
@@ -163,10 +179,10 @@ export default function IdProofPage() {
           <div className="section-head">
             <div>
               <div className="eyebrow">HOTEL CHECK-IN</div>
-              <h2>Keep an ID on this phone.</h2>
+              <h2>Edit and keep ID on this phone.</h2>
               <p>
-                Save your Aadhaar or passport for check-in, then use the group list and bulk PDF for the whole party.
-                Details stay on this phone.
+                Change your Aadhaar, passport or photo anytime below, tap <b>Update ID proof</b>, then ask the chatbot
+                “show my ID proof” — it reads the latest saved details. Group list and bulk PDF stay in sync too.
               </p>
             </div>
             <button type="button" className="button dark" onClick={bulkDownload} disabled={downloading}>
@@ -195,7 +211,13 @@ export default function IdProofPage() {
               >
                 <label>
                   ID type
-                  <select value={idType} onChange={(event) => setIdType(event.target.value as IdProofType)}>
+                  <select
+                    value={idType}
+                    onChange={(event) => {
+                      setIdType(event.target.value as IdProofType);
+                      markDirty();
+                    }}
+                  >
                     <option value="aadhaar">Aadhaar</option>
                     <option value="passport">Passport</option>
                     <option value="other">Other ID</option>
@@ -205,7 +227,10 @@ export default function IdProofPage() {
                   {idType === 'aadhaar' ? 'Aadhaar number' : 'ID number'}
                   <input
                     value={idNumber}
-                    onChange={(event) => setIdNumber(event.target.value)}
+                    onChange={(event) => {
+                      setIdNumber(event.target.value);
+                      markDirty();
+                    }}
                     inputMode={idType === 'aadhaar' ? 'numeric' : 'text'}
                     placeholder={idType === 'aadhaar' ? '12 digit Aadhaar number' : 'ID number'}
                     autoComplete="off"
@@ -213,13 +238,22 @@ export default function IdProofPage() {
                 </label>
                 <label>
                   Name on the card
-                  <input value={nameOnId} onChange={(event) => setNameOnId(event.target.value)} />
+                  <input
+                    value={nameOnId}
+                    onChange={(event) => {
+                      setNameOnId(event.target.value);
+                      markDirty();
+                    }}
+                  />
                 </label>
                 <label>
                   Note for the hotel
                   <input
                     value={note}
-                    onChange={(event) => setNote(event.target.value)}
+                    onChange={(event) => {
+                      setNote(event.target.value);
+                      markDirty();
+                    }}
                     placeholder="Optional, e.g. address on the card"
                   />
                 </label>
@@ -231,11 +265,13 @@ export default function IdProofPage() {
                     onChange={(event) => onFile(event.target.files?.[0])}
                   />
                 </label>
-                {fileName && <p className="id-proof-file">{fileName} is ready to save.</p>}
+                {fileName && <p className="id-proof-file">{fileName} is ready to {proof ? 'update' : 'save'}.</p>}
+                {dirty && <p className="id-proof-dirty">Unsaved edits — tap Update ID proof to apply.</p>}
+                {savedFlash && <p className="id-proof-file">Updated. The chatbot will use these new details.</p>}
                 {error && <p className="id-proof-error">{error}</p>}
                 <div className="id-proof-actions">
-                  <button type="submit" className="button dark">
-                    Save ID
+                  <button type="submit" className="button dark" disabled={!dirty && Boolean(proof)}>
+                    {proof ? 'Update ID proof' : 'Save ID'}
                   </button>
                   {proof && (
                     <button type="button" className="button pale" onClick={() => setShowing(true)}>
@@ -259,11 +295,20 @@ export default function IdProofPage() {
                       {proof.idNumber ? ` · ${proof.idNumber}` : ''}
                     </p>
                     <p>{proof.nameOnId || focusName}</p>
+                    {proof.note ? <p className="id-proof-file">{proof.note}</p> : null}
+                    <p className="id-proof-file">
+                      Last updated {new Date(proof.updatedAt).toLocaleString('en-IN')}
+                    </p>
                     {image && fileDataUrl && <img src={fileDataUrl} alt={`${focusName} ID`} />}
-                    {!image && fileDataUrl && <p className="id-proof-file">A PDF is saved. Open check-in view to show it.</p>}
+                    {!image && fileDataUrl && (
+                      <p className="id-proof-file">A PDF is saved. Open check-in view to show it.</p>
+                    )}
+                    <p className="id-proof-file">
+                      Edit the form on the left, tap Update ID proof, then ask the chatbot for your ID.
+                    </p>
                   </>
                 ) : (
-                  <p>Add the number or a photo, then save. The chatbot can read it back when you ask.</p>
+                  <p>Add the number or a photo, then save. The chatbot reads the latest saved ID when you ask.</p>
                 )}
               </aside>
             </div>

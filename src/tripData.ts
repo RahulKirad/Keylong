@@ -1,3 +1,5 @@
+export type StayType = '' | 'hotel' | 'homestay' | 'camping' | 'other';
+
 export type Place = {
   id: string;
   name: string;
@@ -8,7 +10,18 @@ export type Place = {
   kind: string;
   about: string;
   tips: string[];
+  /** Overnight / rest halt used on the map and stay checklist. */
+  isHalt: boolean;
+  /** hotel | homestay | camping | other — set in Trip tables. */
+  stayType: StayType;
+  /** Property name (fill in later) — chatbot answers “where do we stay in Kaza?” from this. */
+  stayName: string;
 };
+
+export function inferPlaceIsHalt(place: Pick<Place, 'kind' | 'isHalt'>): boolean {
+  if (typeof place.isHalt === 'boolean') return place.isHalt;
+  return /overnight|homestay|home base|main .*base|before airport/i.test(place.kind);
+}
 
 export type ScheduleRow = {
   id: string;
@@ -54,6 +67,9 @@ export type StayNight = {
   location: string;
   nights: string;
   priority: string;
+  /** Hotel / homestay / camping name for that night (mirrors Places stay when linked). */
+  stayName?: string;
+  stayType?: StayType;
 };
 
 export type TripMeta = {
@@ -97,6 +113,9 @@ export const places: Place[] = [
     kind: 'Home base',
     about: 'Trip start and end point after the Delhi flight home.',
     tips: ['Allow buffer time for the Pune → Mumbai train connection', 'Confirm return flight details before leaving Spiti'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'mumbai',
@@ -108,6 +127,9 @@ export const places: Place[] = [
     kind: 'Train start',
     about: 'Board train 22917 BDTS–NZM SF Express toward Delhi.',
     tips: ['Reach Bandra Terminus with sufficient station buffer', 'Keep ticket and photo ID ready'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'delhi',
@@ -119,6 +141,9 @@ export const places: Place[] = [
     kind: 'City stop',
     about: 'Arrive at Hazrat Nizamuddin, rest, then overnight bus to Shimla; later airport for the Pune flight.',
     tips: ['24 Dec: rest until the overnight bus', '3 Jan: aim for a large airport buffer after the Kufri drive'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'shimla',
@@ -130,6 +155,9 @@ export const places: Place[] = [
     kind: 'Overnight base',
     about: 'First mountain overnight after the Delhi bus; Mall Road and The Ridge if arrival allows.',
     tips: ['Avoid overplanning after overnight bus travel', 'Confirm heated room and luggage drop'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'narkanda',
@@ -141,6 +169,9 @@ export const places: Place[] = [
     kind: 'En route',
     about: 'Corridor on the Shimla → Sangla drive via Narkanda and Rampur.',
     tips: ['Start early from Shimla', 'Keep lunch breaks short'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'sangla',
@@ -152,6 +183,9 @@ export const places: Place[] = [
     kind: 'Overnight base',
     about: 'Baspa Valley overnight with optional Chitkul if the road is open and safe.',
     tips: ['Confirm winter road access and heating', 'Avoid late-night road travel'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'chitkul',
@@ -163,6 +197,9 @@ export const places: Place[] = [
     kind: 'Optional excursion',
     about: 'Optional day push from Sangla only when the road is confirmed open.',
     tips: ['Skip if conditions are uncertain', 'Return to Sangla before continuing to Kalpa'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'kalpa',
@@ -174,6 +211,9 @@ export const places: Place[] = [
     kind: 'Overnight base',
     about: 'Mountain views and staging point for the demanding Kalpa ↔ Kaza winter legs.',
     tips: ['Confirm meals and road access', 'Early departures preferred toward Spiti'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'nako',
@@ -185,6 +225,9 @@ export const places: Place[] = [
     kind: 'En route',
     about: 'High corridor stop depending on winter road status toward Tabo and Kaza.',
     tips: ['Do not depend on every roadside shop being open', 'Follow the driver’s safety call'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'tabo',
@@ -196,6 +239,9 @@ export const places: Place[] = [
     kind: 'En route',
     about: 'Monastery town on the Kalpa–Kaza corridor when conditions allow.',
     tips: ['Use as a status check stop', 'Do not push after dark'],
+    isHalt: false,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'kaza',
@@ -207,6 +253,9 @@ export const places: Place[] = [
     kind: 'Main Spiti base',
     about: 'Core Spiti overnight for market days, Langza access, and New Year’s Eve.',
     tips: ['Book NYE stay and any event separately', 'Confirm Langza road before leaving'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
   {
     id: 'langza',
@@ -218,6 +267,9 @@ export const places: Place[] = [
     kind: 'Homestay overnight',
     about: 'High village with Buddha statue; take altitude and cold seriously.',
     tips: ['Confirm heating, bedding, water and meals', 'Move slowly; avoid long walks in extreme cold'],
+    isHalt: true,
+    stayType: 'homestay',
+    stayName: '',
   },
   {
     id: 'kufri',
@@ -229,6 +281,9 @@ export const places: Place[] = [
     kind: 'Overnight before airport',
     about: 'Return overnight before the long pre-dawn drive to Delhi airport.',
     tips: ['Pack luggage the night before', 'Kufri → DEL same day as the flight is the riskiest connection'],
+    isHalt: true,
+    stayType: '',
+    stayName: '',
   },
 ];
 
@@ -539,15 +594,170 @@ export const stayNights: StayNight[] = [
   },
 ];
 
-export const safetyChecklist = [
-  'Check official road and weather status before each Spiti / Kinnaur drive',
-  'Confirm winter tyres, chains and an experienced local driver for mountain legs',
-  'Keep warm layers, waterproof footwear, gloves, spare socks, water, snacks, power bank, medicines and ID',
-  'Do not push Kalpa ↔ Kaza after dark; stop at safe accommodation if advised',
-  'Confirm Langza heating, bedding, water and meals before overnight',
-  'Book New Year’s Eve stay and any event in Kaza separately',
-  'After NYE, only leave Kaza when the group is rested and the driver confirms conditions',
-  'Treat Kufri → Delhi airport on 3 Jan as high risk; prefer a Delhi overnight on 2 Jan if possible',
+export type SafetyCategory = {
+  id: string;
+  title: string;
+  intro: string;
+  points: string[];
+};
+
+export type MustCarryGroup = {
+  id: string;
+  title: string;
+  items: string[];
+};
+
+/** Detailed winter / Spiti safety guide shown on the Safety page. */
+export const safetyCategories: SafetyCategory[] = [
+  {
+    id: 'weather-cold',
+    title: 'Weather & extreme cold',
+    intro:
+      'Late December to early January in Kinnaur–Spiti is severe. Day highs in Kaza/Langza are often below freezing; nights can drop to −15°C to −22°C or lower with wind chill.',
+    points: [
+      'Expect dry cold, strong wind, and sudden temperature drops after sunset — plan outdoor time for midday only in Spiti.',
+      'Layer clothing (base + mid fleece + windproof outer). Never rely on a single thick jacket alone.',
+      'Cover head, ears, neck and hands at all times outdoors in Kaza/Langza; heat loss is fastest there.',
+      'Keep lips, face and hands moisturised; high-altitude winter air cracks skin quickly.',
+      'Watch for early signs of hypothermia (shivering, confusion, slurred speech) and frostbite (numb white/grey fingers, toes, nose, ears) — warm up indoors immediately and tell the group.',
+      'Do not walk long distances alone after dark in Spiti villages; ice and black ice are common.',
+      'Battery power dies faster in cold — keep phone/power bank inside an inner pocket close to the body.',
+    ],
+  },
+  {
+    id: 'natural-calamities',
+    title: 'Natural calamities & road hazards',
+    intro:
+      'Winter mountain roads can close without notice due to snow, ice, landslides, rockfall or blocked passes. Treat every long drive as weather-dependent.',
+    points: [
+      'Check official Himachal / local road and weather status before every Kinnaur–Spiti drive; do not rely only on social media.',
+      'Snowfall, black ice, white-out, and blocked stretches between Kalpa ↔ Kaza are common mid-winter risks.',
+      'Landslides or rockfall can cut the highway for hours or days — keep buffer days and cash for unexpected hotel nights.',
+      'If the driver advises turning back or stopping early, accept it. The itinerary is a plan, not a promise.',
+      'Never force a drive after dark on Kalpa ↔ Kaza or high corridors; stop at the nearest safe lodging.',
+      'In a white-out or heavy snow, stay with the vehicle/group; do not walk off-road to “find a signal”.',
+      'Keep the group’s emergency contacts, hotel numbers and driver’s number written on paper (phones can die).',
+      'If stranded, stay visible, conserve fuel/heat, share food/water, and wait for local help rather than splitting up.',
+    ],
+  },
+  {
+    id: 'altitude-health',
+    title: 'Altitude, health & temperature stress',
+    intro:
+      'Langza (~4,400 m) and Kaza (~3,650 m) mean thinner air plus cold. Even fit travellers can feel unwell.',
+    points: [
+      'Ascend gradually in spirit: avoid racing upstairs, heavy bags, or long walks on day one in Kaza/Langza.',
+      'Drink water regularly; dry cold dehydrates you even if you do not feel thirsty.',
+      'Limit alcohol on high-altitude nights — it worsens dehydration and cold risk.',
+      'Carry personal medicines, a basic first-aid kit, ORS, pain relief, and any prescribed altitude/cold meds from your doctor.',
+      'If severe headache, vomiting, breathlessness at rest, or confusion appears, descend to a lower overnight (e.g. toward Kalpa) and seek medical help — do not tough it out for sightseeing.',
+      'Eat warm meals; skipping food in extreme cold reduces energy for staying warm.',
+      'On Langza overnight: confirm heating, hot water, bedding and food before committing; skip if the homestay cannot support winter overnight.',
+    ],
+  },
+  {
+    id: 'travel-driving',
+    title: 'Travel, driving & night movement',
+    intro: 'Most serious trip risk sits on the long private-cab mountain legs and the Kufri → Delhi airport connection.',
+    points: [
+      'Use an experienced local winter driver with winter tyres / chains available for mountain legs.',
+      'Start Kalpa ↔ Kaza style drives early; build large time buffers and never schedule tight same-day flights after a long mountain transfer.',
+      'Treat Kufri → Delhi airport on 3 Jan as high risk; prefer a Delhi overnight on 2 Jan if the group can rearrange.',
+      'Keep passport/Aadhaar, tickets and boarding passes photocopied or offline on phone plus one paper copy in another bag.',
+      'Agree a meeting point and time if anyone separates in markets (Kaza, Shimla Mall Road).',
+      'After New Year’s Eve, leave Kaza only when everyone is rested and the driver confirms road conditions.',
+      'Share live location within the trusted trip group during long drives when network allows.',
+    ],
+  },
+  {
+    id: 'women-safety',
+    title: 'Women travellers & personal safety',
+    intro:
+      'The group travels together, but add extra personal-safety habits for women travellers in transit hubs, overnight buses, and village stays.',
+    points: [
+      'Buddy system: women travellers should not walk alone at night in Delhi, Shimla, Kaza markets or between rooms/vehicles — go in pairs or with the group.',
+      'On overnight train/bus: keep valuables and ID in a body pouch or bag that stays on you while sleeping; use the group’s agreed seat/berth cluster.',
+      'Prefer well-lit, staffed areas at stations and bus stands; wait together for pickups rather than accepting unknown offers of “taxi help”.',
+      'At homestays/hotels, note room lock, bathroom location, and emergency exit; request rooms near other group members when possible.',
+      'Dress in warm, modest, practical layers suitable for conservative mountain towns; carry a scarf/shawl for wind and comfort.',
+      'Keep a charged phone, whistle/alarm (optional), and emergency cash in an inner pocket; share your day’s plan with at least one group member.',
+      'If anyone feels unsafe with a driver, stay, or crowd: say so early, stick with the group, and move to a public staffed place (hotel lobby, restaurant).',
+      'Sanitary products: pack more than needed — village shops may be closed or limited in deep winter; carry personal medication for periods/pain.',
+      'Use hotel/homestay bathrooms when possible; avoid isolated dark outdoor spots after dusk.',
+    ],
+  },
+  {
+    id: 'nye-group',
+    title: 'New Year’s Eve & group discipline',
+    intro: '31 Dec in Kaza is cold, dark and logistically tight. Celebration should not override safety.',
+    points: [
+      'Book NYE stay and any event separately in advance; do not assume a public party is available.',
+      'Limit alcohol; cold + altitude + late night increases accident and hypothermia risk.',
+      'Return to the hotel together; no solo walks back in freezing dark streets.',
+      'Keep warm layers on even indoors at events if heating is weak.',
+      'Confirm next-morning departure plan before sleeping; 1 Jan is a long return corridor day.',
+    ],
+  },
+];
+
+/** Must-carry packing list for Spiti winter (tickable on Safety page). */
+export const mustCarryGroups: MustCarryGroup[] = [
+  {
+    id: 'clothing',
+    title: 'Clothing (must have)',
+    items: [
+      'Thermal base layers (top + bottom) — at least 2 sets',
+      'Fleece / wool mid-layer',
+      'Windproof + preferably down or heavy padded jacket',
+      'Warm trousers (avoid thin jeans as only outer layer in Spiti)',
+      'Wool or thermal socks (several pairs) + spare socks in daypack',
+      'Insulated waterproof gloves + thin inner gloves',
+      'Warm cap / beanie that covers ears + neck warmer or muffler',
+      'Waterproof or heavily insulated shoes with good grip (broken-in)',
+      'Sunglasses (snow glare) and optional balaclava/face cover for wind',
+    ],
+  },
+  {
+    id: 'health',
+    title: 'Health & personal care',
+    items: [
+      'Personal prescription medicines + copy of prescriptions',
+      'Basic first-aid: bandages, antiseptic, pain relief, antacid, ORS, anti-allergy',
+      'Lip balm, heavy moisturiser, sunscreen (SPF), petroleum jelly for windburn',
+      'Sanitary products (extra), wet wipes, hand sanitiser, toilet paper roll',
+      'Any doctor-advised altitude / motion-sickness medication',
+      'Reusable water bottle (fill with warm water when possible)',
+    ],
+  },
+  {
+    id: 'electronics-docs',
+    title: 'Electronics, documents & money',
+    items: [
+      'Phone + power bank (20,000 mAh ideal) + charging cables',
+      'Offline maps / saved contacts; paper list of hotels + driver + emergency numbers',
+      'Aadhaar / passport + ticket printouts or offline PDFs; one set stored separately',
+      'Enough cash (ATMs unreliable in Spiti winter) + one card as backup',
+      'Torch / phone flashlight; optional headlamp for Langza night walks',
+      'Universal adaptor if needed; keep electronics in inner pockets in extreme cold',
+    ],
+  },
+  {
+    id: 'daypack',
+    title: 'Daypack for drives & day walks',
+    items: [
+      'Water + dry snacks (nuts, energy bars) for long road days',
+      'Spare socks, gloves, and one warm layer in the car bag',
+      'Small towel / handkerchief; plastic bags for wet clothes',
+      'ID + some cash in a zip pocket while sightseeing',
+      'Group medicine pouch for shared basics',
+    ],
+  },
+];
+
+/** Flat checklist used by store, PDF and tick UI (all detailed points + must-carry lines). */
+export const safetyChecklist: string[] = [
+  ...safetyCategories.flatMap((category) => category.points),
+  ...mustCarryGroups.flatMap((group) => group.items.map((item) => `${group.title}: ${item}`)),
 ];
 
 export const tripMeta: TripMeta = {
