@@ -522,7 +522,11 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
             <thead>
               <tr>
                 <th>Night</th>
+                <th>Date</th>
+                <th>Day</th>
                 <th>Location</th>
+                <th>Check-in</th>
+                <th>Check-out</th>
                 <th>Stay type</th>
                 <th>Hotel / homestay name</th>
                 <th>Nights</th>
@@ -541,9 +545,37 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
                   </td>
                   <td>
                     <EditableCell
+                      ariaLabel="Date"
+                      value={stay.dateLabel || ''}
+                      onChange={(dateLabel) => patchStay(stay.id, { dateLabel })}
+                    />
+                  </td>
+                  <td>
+                    <EditableCell
+                      ariaLabel="Trip day"
+                      value={stay.tripDay ? String(stay.tripDay) : ''}
+                      onChange={(v) => patchStay(stay.id, { tripDay: parseInt(v, 10) || 0 })}
+                    />
+                  </td>
+                  <td>
+                    <EditableCell
                       ariaLabel="Location"
                       value={stay.location}
                       onChange={(location) => patchStay(stay.id, { location })}
+                    />
+                  </td>
+                  <td>
+                    <EditableCell
+                      ariaLabel="Check-in"
+                      value={stay.checkIn || ''}
+                      onChange={(checkIn) => patchStay(stay.id, { checkIn })}
+                    />
+                  </td>
+                  <td>
+                    <EditableCell
+                      ariaLabel="Check-out"
+                      value={stay.checkOut || ''}
+                      onChange={(checkOut) => patchStay(stay.id, { checkOut })}
                     />
                   </td>
                   <td>

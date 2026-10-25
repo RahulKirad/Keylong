@@ -25,7 +25,11 @@ import {
   ClipboardList,
   IdCard,
   Thermometer,
+  BedDouble,
 } from 'lucide-react';
+import HaltsStaysSection from './HaltsStaysSection';
+import TripCountdownDisplay from './TripCountdownDisplay';
+import { useTripCountdown } from './useTripCountdown';
 import { assignmentsForDay, subscribeAssignments } from './assignmentStore';
 import SyncStatusBadge from './SyncStatusBadge';
 import NavTempBadge from './NavTempBadge';
@@ -46,6 +50,7 @@ import {
   getSafetyChecklist,
   getTransportSegments,
   getTripMeta,
+  getStayNights,
   subscribeItinerary,
 } from './itineraryStore';
 
@@ -58,18 +63,22 @@ const ROUTE_SEGMENT_IDS: Record<RouteMode, string[]> = {
     'delhi',
     'shimla',
     'narkanda',
-    'sangla',
+    'chitkul',
     'kalpa',
     'nako',
+    'khab',
     'tabo',
-    'kaza',
+    'dhankar',
     'langza',
+    'komic',
+    'ke-gompa',
+    'chicham',
     'kufri',
     'delhi',
   ],
-  approach: ['delhi', 'shimla', 'narkanda', 'sangla', 'kalpa'],
-  spiti: ['kalpa', 'nako', 'tabo', 'kaza', 'langza'],
-  return: ['kaza', 'tabo', 'nako', 'kalpa', 'narkanda', 'shimla', 'kufri', 'delhi'],
+  approach: ['delhi', 'shimla', 'narkanda', 'chitkul', 'kalpa'],
+  spiti: ['kalpa', 'nako', 'khab', 'tabo', 'dhankar', 'langza', 'komic', 'ke-gompa', 'chicham'],
+  return: ['langza', 'tabo', 'nako', 'kalpa', 'narkanda', 'shimla', 'kufri', 'delhi'],
 };
 function HeroBg() {
   return (
@@ -102,8 +111,10 @@ export default function TripPlannerPage() {
 
   const places = getPlaces();
   const days = getDays();
+  const stayNights = getStayNights();
   const safetyChecklist = getSafetyChecklist();
   const tripMeta = getTripMeta();
+  const tripCountdown = useTripCountdown();
   const transportSegments = getTransportSegments();
   const trainRows = days.flatMap((day) =>
     day.scheduleRows.filter((row) => /train|rail|bdts|nzm|22917/i.test(`${row.mode} ${row.activity}`)),
@@ -215,6 +226,7 @@ export default function TripPlannerPage() {
             <div className="nav-dates">
                 <CalendarDays size={15} /> {tripMeta.dates}
             </div>
+            <TripCountdownDisplay countdown={tripCountdown} variant="nav" />
             <NavTempBadge />
             <SyncStatusBadge compact />
           </div>
@@ -252,6 +264,9 @@ export default function TripPlannerPage() {
                   </Link>
                   <a href="#itinerary" onClick={closeNav}>
                     <CalendarDays size={15} /> Itinerary
+                  </a>
+                  <a href="#halts-stays" onClick={closeNav}>
+                    <BedDouble size={15} /> Stays
                   </a>
                   <a href="#budget" onClick={closeNav}>
                     <IndianRupee size={15} /> Budget
@@ -369,6 +384,7 @@ export default function TripPlannerPage() {
               Pune to Spiti via Shimla, Sangla, Kalpa, Kaza and Langza — then home through Kufri and Delhi. Edit the
               live tables whenever the plan changes.
             </p>
+            <TripCountdownDisplay countdown={tripCountdown} variant="hero" />
             <div className="hero-meta">
               <span>
                 <CalendarDays /> {tripMeta.dates}
@@ -486,10 +502,11 @@ export default function TripPlannerPage() {
             closures may differ from mapped roads — confirm locally before travel.
           </div>
         </section>
+        <HaltsStaysSection stays={stayNights} />
         <section id="itinerary" className="section">
           <div className="section-head">
             <div>
-              <div className="eyebrow">{days.length} DAYS · SPITI TOUR 2026</div>
+              <div className="eyebrow">{days.length} DAYS · FINAL ROUTE PLAN</div>
               <h2>Day by day, at your pace.</h2>
               <p>
                 Select a day to move the map route and open that day’s practical notes. Days with assigned tasks are

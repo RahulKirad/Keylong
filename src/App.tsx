@@ -8,6 +8,7 @@ import TemperaturePage from './TemperaturePage';
 import TripTablesPage from './TripTablesPage';
 import NavigationBridge from './NavigationBridge';
 import UnlockScreen from './UnlockScreen';
+import DailyTripReminder from './DailyTripReminder';
 import { isAppUnlocked } from './tripUnlock';
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <NavigationBridge />
+      <DailyTripReminder />
       <Routes>
         <Route path="/" element={<TripPlannerPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />

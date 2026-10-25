@@ -12,7 +12,7 @@ import {
   type TripPhase,
 } from './tripData';
 
-export const ITINERARY_STORAGE_KEY = 'spiti-tour-2026-itinerary-v1';
+export const ITINERARY_STORAGE_KEY = 'spiti-tour-2026-itinerary-v2-final-plan';
 
 export type ItineraryState = {
   tripMeta: TripMeta;
@@ -41,6 +41,18 @@ function normalizeDay(day: Day): Day {
 function normalizeStayType(value: unknown): StayType {
   if (value === 'hotel' || value === 'homestay' || value === 'camping' || value === 'other') return value;
   return '';
+}
+
+function normalizeStayNight(stay: StayNight, index: number): StayNight {
+  return {
+    ...stay,
+    dateLabel: stay.dateLabel || stay.night,
+    tripDay: typeof stay.tripDay === 'number' ? stay.tripDay : 0,
+    checkIn: stay.checkIn || '',
+    checkOut: stay.checkOut || '',
+    stayName: stay.stayName || '',
+    stayType: normalizeStayType(stay.stayType),
+  };
 }
 
 function normalizePlace(place: Place): Place {
@@ -105,6 +117,11 @@ const PLACE_ALIASES: Record<string, string[]> = {
   kaza: ['kaza'],
   langza: ['langza'],
   kufri: ['kufri'],
+  dhankar: ['dhankar'],
+  khab: ['khab', 'sangam', 'khab sangam'],
+  komic: ['komic'],
+  'ke-gompa': ['key monastery', 'ke gompa', 'key gompa'],
+  chicham: ['chicham', 'chicham bridge'],
 };
 
 export function resolvePlaceIdsFromText(text: string, places: Place[]): string[] {
@@ -366,7 +383,9 @@ function normalizeState(raw: Partial<ItineraryState> | null | undefined): Itiner
         ? raw.transportSegments
         : base.transportSegments,
     stayNights:
-      Array.isArray(raw.stayNights) && raw.stayNights.length ? raw.stayNights : base.stayNights,
+      Array.isArray(raw.stayNights) && raw.stayNights.length
+        ? raw.stayNights.map((s, i) => normalizeStayNight(s as StayNight, i))
+        : base.stayNights.map(normalizeStayNight),
     // Prefer expanded default guide when stored checklist is the old short list.
     safetyChecklist:
       Array.isArray(raw.safetyChecklist) && raw.safetyChecklist.length >= base.safetyChecklist.length
