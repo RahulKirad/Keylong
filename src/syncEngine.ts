@@ -2,6 +2,11 @@ import { supabase, supabaseConfigured } from './supabaseClient';
 import {
   getExpenseState,
   setExpenseStateFromServer,
+  getDeletedExpenseIds,
+  getDeletedTransferIds,
+  getDeletedSettlementIds,
+  filterOutDeletedRecords,
+  mergeDeletedIdsFromServer,
   ExpenseStoreState,
   ExpenseRecord,
   FundTransfer,
@@ -71,6 +76,31 @@ let lastSyncHash = '';
 const SETTLEMENTS_BLOB_ID = 'shared_settlements';
 const PROFILES_BLOB_ID = 'shared_traveller_profiles';
 const POOL_MANAGERS_BLOB_ID = 'shared_pool_managers';
+/** Shared permanently-deleted ids so refresh / other devices cannot resurrect rows. */
+const TOMBSTONES_BLOB_ID = 'shared_deleted_ids';
+
+type SharedTombstones = {
+  expenses: string[];
+  transfers: string[];
+  settlements: string[];
+};
+
+function parseTombstoneBlob(raw: unknown): SharedTombstones {
+  const empty: SharedTombstones = { expenses: [], transfers: [], settlements: [] };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return empty;
+  const obj = raw as Record<string, unknown>;
+  const asIds = (v: unknown) =>
+    Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
+  return {
+    expenses: asIds(obj.expenses),
+    transfers: asIds(obj.transfers),
+    settlements: asIds(obj.settlements),
+  };
+}
+
+function mergeIdLists(...lists: string[][]): string[] {
+  return [...new Set(lists.flat().filter(Boolean))].slice(-500);
+}
 
 function parseSettlementBlob(raw: unknown, remap: Map<string, string>): DebtSettlement[] {
   if (!Array.isArray(raw)) return [];
@@ -274,7 +304,13 @@ export async function pullDatabase(): Promise<boolean> {
       supabase
         .from('trip_budget')
         .select('*')
-        .in('id', ['singleton', SETTLEMENTS_BLOB_ID, PROFILES_BLOB_ID, POOL_MANAGERS_BLOB_ID]),
+        .in('id', [
+          'singleton',
+          SETTLEMENTS_BLOB_ID,
+          PROFILES_BLOB_ID,
+          POOL_MANAGERS_BLOB_ID,
+          TOMBSTONES_BLOB_ID,
+        ]),
     ]);
 
     if (membersRes.error) throw membersRes.error;
@@ -291,6 +327,9 @@ export async function pullDatabase(): Promise<boolean> {
     const settlementsBlobRow = budgetRows.find((r: any) => r.id === SETTLEMENTS_BLOB_ID);
     const profilesBlobRow = budgetRows.find((r: any) => r.id === PROFILES_BLOB_ID);
     const poolManagersBlobRow = budgetRows.find((r: any) => r.id === POOL_MANAGERS_BLOB_ID);
+    const tombstonesBlobRow = budgetRows.find((r: any) => r.id === TOMBSTONES_BLOB_ID);
+    const cloudTombs = parseTombstoneBlob(tombstonesBlobRow?.categories);
+    mergeDeletedIdsFromServer(cloudTombs);
 
     const rawMembers = (membersRes.data || []).map((r: any) => ({
       id: r.id as string,
@@ -394,21 +433,22 @@ export async function pullDatabase(): Promise<boolean> {
         : null;
 
     const localExpenses = getExpenseState();
+    const deletedExpenseIds = getDeletedExpenseIds();
+    const deletedTransferIds = getDeletedTransferIds();
+    const deletedSettlementIds = getDeletedSettlementIds();
     const serverSettlements = parseSettlementBlob(settlementsBlobRow?.categories, remap);
-    const mergedExpenseRows = mergeById(
-      expenses,
-      localExpenses.expenses || [],
-      (e) => e.updatedAt || e.createdAt || 0,
+    // Never resurrect rows the user permanently deleted (tombstones win over mergeById).
+    const mergedExpenseRows = filterOutDeletedRecords(
+      mergeById(expenses, localExpenses.expenses || [], (e) => e.updatedAt || e.createdAt || 0),
+      deletedExpenseIds,
     );
-    const mergedTransfers = mergeById(
-      transfers,
-      localExpenses.transfers || [],
-      (t) => t.createdAt || 0,
+    const mergedTransfers = filterOutDeletedRecords(
+      mergeById(transfers, localExpenses.transfers || [], (t) => t.createdAt || 0),
+      deletedTransferIds,
     );
-    const settlements = mergeById(
-      serverSettlements,
-      localExpenses.settlements || [],
-      (s) => s.createdAt || 0,
+    const settlements = filterOutDeletedRecords(
+      mergeById(serverSettlements, localExpenses.settlements || [], (s) => s.createdAt || 0),
+      deletedSettlementIds,
     );
     const mergedExpenses: ExpenseStoreState = {
       members: members.length > 0 ? members : localExpenses.members,
@@ -418,6 +458,22 @@ export async function pullDatabase(): Promise<boolean> {
       pending: localExpenses.pending || [],
     };
     setExpenseStateFromServer(mergedExpenses);
+
+    // Re-apply hard deletes on the cloud so other devices / later pulls stay clean.
+    if (deletedExpenseIds.size > 0) {
+      const { error } = await supabase
+        .from('trip_expenses')
+        .delete()
+        .in('id', [...deletedExpenseIds]);
+      if (error) console.warn('Could not purge deleted expenses from cloud:', error.message);
+    }
+    if (deletedTransferIds.size > 0) {
+      const { error } = await supabase
+        .from('trip_transfers')
+        .delete()
+        .in('id', [...deletedTransferIds]);
+      if (error) console.warn('Could not purge deleted transfers from cloud:', error.message);
+    }
 
     setAssignmentStateFromServer({ assignments });
 
@@ -616,19 +672,22 @@ export async function pushSync(): Promise<boolean> {
       source: t.source,
     }));
 
-    const settlementBlob = (exp.settlements || []).map((s) => ({
-      id: s.id,
-      fromPersonId: personId(s.fromPersonId, remap),
-      fromPersonName: s.fromPersonName,
-      toPersonId: personId(s.toPersonId, remap),
-      toPersonName: s.toPersonName,
-      amountInr: s.amountInr,
-      note: s.note || null,
-      expenseId: s.expenseId || null,
-      paymentMethod: s.paymentMethod,
-      createdAt: s.createdAt,
-      source: s.source,
-    }));
+    const deletedSettlementIds = getDeletedSettlementIds();
+    const settlementBlob = filterOutDeletedRecords(exp.settlements || [], deletedSettlementIds).map(
+      (s) => ({
+        id: s.id,
+        fromPersonId: personId(s.fromPersonId, remap),
+        fromPersonName: s.fromPersonName,
+        toPersonId: personId(s.toPersonId, remap),
+        toPersonName: s.toPersonName,
+        amountInr: s.amountInr,
+        note: s.note || null,
+        expenseId: s.expenseId || null,
+        paymentMethod: s.paymentMethod,
+        createdAt: s.createdAt,
+        source: s.source,
+      }),
+    );
 
     const profileBlob = listTravellerProfiles().map((p) => ({
       personId: personId(p.personId, remap) || p.personId,
@@ -711,6 +770,33 @@ export async function pushSync(): Promise<boolean> {
             { onConflict: 'id' },
           ),
       },
+      {
+        table: 'trip_budget',
+        run: async () => {
+          const { data: existingTombs } = await supabase
+            .from('trip_budget')
+            .select('categories')
+            .eq('id', TOMBSTONES_BLOB_ID)
+            .maybeSingle();
+          const cloud = parseTombstoneBlob(existingTombs?.categories);
+          const merged = {
+            expenses: mergeIdLists(cloud.expenses, [...getDeletedExpenseIds()]),
+            transfers: mergeIdLists(cloud.transfers, [...getDeletedTransferIds()]),
+            settlements: mergeIdLists(cloud.settlements, [...getDeletedSettlementIds()]),
+          };
+          mergeDeletedIdsFromServer(merged);
+          return supabase.from('trip_budget').upsert(
+            {
+              id: TOMBSTONES_BLOB_ID,
+              categories: merged,
+              travelers: 0,
+              trip_target: 0,
+              updated_at: Date.now(),
+            },
+            { onConflict: 'id' },
+          );
+        },
+      },
     ];
     if (budgetData) {
       upserts.push({
@@ -732,6 +818,18 @@ export async function pushSync(): Promise<boolean> {
     const results = await Promise.all(upserts.map(async (u) => ({ ...u, result: await u.run() })));
     for (const item of results) {
       if (item.result.error) throw item.result.error;
+    }
+
+    // Hard-delete tombstoned rows so refresh / other devices cannot resurrect them.
+    const deletedExpenseIds = [...getDeletedExpenseIds()];
+    const deletedTransferIds = [...getDeletedTransferIds()];
+    if (deletedExpenseIds.length > 0) {
+      const { error } = await supabase.from('trip_expenses').delete().in('id', deletedExpenseIds);
+      if (error) console.warn('Could not purge deleted expenses on push:', error.message);
+    }
+    if (deletedTransferIds.length > 0) {
+      const { error } = await supabase.from('trip_transfers').delete().in('id', deletedTransferIds);
+      if (error) console.warn('Could not purge deleted transfers on push:', error.message);
     }
 
     const { data: serverMembers, error: memberListError } = await supabase

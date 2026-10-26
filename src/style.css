@@ -1307,6 +1307,15 @@ html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
   background:#17384b;color:#f0c878;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap
 }
 .expense-pair-mark:hover{background:#0f2836;border-color:#0f2836}
+.expense-pair-unmark{
+  min-height:36px;padding:0 14px;border:1px solid #b45309;border-radius:9px;
+  background:#fff7ed;color:#9a3412;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap
+}
+.expense-pair-unmark:hover{background:#ffedd5;border-color:#c2410c}
+.expense-cleared-board{margin-top:18px;padding-top:14px;border-top:1px dashed #d5ddd9}
+.expense-cleared-list .expense-pair-row.is-cleared{background:#fbfcfb;opacity:.98}
+.expense-pair-summary.is-static{cursor:default}
+.expense-pair-summary.is-static:hover{background:transparent}
 
 @media(max-width:980px){
   .expense-settle-board{grid-template-columns:1fr}
@@ -1322,7 +1331,7 @@ html,body,#root,.app,.site-nav,.main{width:100%;max-width:100%}
   .expense-pair-amount{grid-area:amount;text-align:left}
   .expense-pair-preview{grid-area:preview}
   .expense-pair-action{justify-content:stretch}
-  .expense-pair-mark{width:100%}
+  .expense-pair-mark,.expense-pair-unmark{width:100%}
   .expense-pair-person strong{max-width:140px}
 }
 @media(max-width:520px){
