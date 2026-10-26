@@ -3,13 +3,7 @@ import type { Day } from './tripData';
 import { memberBalanceRemaining } from './expenseLedger';
 import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
 import { registerTravellerSeeder } from './travellerSeed';
-import {
-  collapseMembers,
-  remapId,
-  resolveMemberId,
-  samePersonName,
-  stableMemberId,
-} from './memberIdentity';
+import { collapseMembers, remapId, samePersonName, stableMemberId } from './memberIdentity';
 
 export const EXPENSE_STORAGE_KEY = 'winter-himachal-expenses-v1';
 
@@ -163,11 +157,11 @@ export function dedupeExpenseState(input: ExpenseStoreState): ExpenseStoreState 
         expense.givenByPersonId,
         remap,
       );
-      // Exclusions: resolve legacy/stale ids onto members; keep user’s exclusions intact.
+      // Exclusions: remap ids, then drop any that still collide with the payer.
       const splitExcludedPersonIds = [
         ...new Set(
           normalized.splitExcludedPersonIds
-            .map((id) => resolveMemberId(id, members, remap) || idOf(id) || id)
+            .map((id) => idOf(id) || id)
             .filter((id) => id && id !== paidByPersonId),
         ),
       ];
