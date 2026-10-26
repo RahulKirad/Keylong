@@ -62,31 +62,43 @@ function updateStatus(patch: Partial<SyncStatusState>) {
 
 let isSyncing = false;
 let lastSyncHash = '';
-/** Tables that 404'd on this project — skip until page reload after migrations. */
-const missingTables = new Set<string>();
 
-function isMissingRelationError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: string; message?: string; details?: string; hint?: string; status?: number };
-  const blob = `${e.code || ''} ${e.message || ''} ${e.details || ''} ${e.hint || ''}`.toLowerCase();
-  return (
-    e.code === '42P01' ||
-    e.code === 'PGRST205' ||
-    e.status === 404 ||
-    blob.includes('does not exist') ||
-    blob.includes('could not find the table') ||
-    blob.includes('schema cache')
-  );
+/**
+ * Dedicated settlement/profile tables are often missing on older hosted projects (404).
+ * Sync them through trip_budget rows that already exist — no SQL migration required.
+ */
+const SETTLEMENTS_BLOB_ID = 'shared_settlements';
+const PROFILES_BLOB_ID = 'shared_traveller_profiles';
+
+function parseSettlementBlob(raw: unknown, remap: Map<string, string>): DebtSettlement[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: any) => ({
+      id: String(r.id || ''),
+      fromPersonId: personId(r.fromPersonId || r.from_person_id, remap),
+      fromPersonName: String(r.fromPersonName || r.from_person_name || ''),
+      toPersonId: personId(r.toPersonId || r.to_person_id, remap),
+      toPersonName: String(r.toPersonName || r.to_person_name || ''),
+      amountInr: Number(r.amountInr ?? r.amount_inr) || 0,
+      note: r.note || undefined,
+      expenseId: r.expenseId || r.expense_id || undefined,
+      paymentMethod: (r.paymentMethod || r.payment_method || 'unknown') as DebtSettlement['paymentMethod'],
+      createdAt: Number(r.createdAt ?? r.created_at) || 0,
+      source: (r.source || 'manual') as DebtSettlement['source'],
+    }))
+    .filter((s) => s.id);
 }
 
-function noteMissingTable(table: string, err: unknown): void {
-  if (!isMissingRelationError(err)) return;
-  if (!missingTables.has(table)) {
-    missingTables.add(table);
-    console.warn(
-      `[sync] Table "${table}" is missing on Supabase (404). Run supabase/APPLY_MISSING_TABLES.sql in the SQL Editor.`,
-    );
-  }
+function parseProfileBlob(raw: unknown, remap: Map<string, string>): TravellerProfile[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: any) => ({
+      personId: personId(r.personId || r.person_id, remap) || String(r.personId || r.person_id || ''),
+      personName: String(r.personName || r.person_name || ''),
+      photoDataUrl: r.photoDataUrl || r.photo_data_url || undefined,
+      updatedAt: Number(r.updatedAt ?? r.updated_at) || 0,
+    }))
+    .filter((p) => p.personId);
 }
 
 function mergeById<T extends { id: string }>(
@@ -183,8 +195,6 @@ async function removeDuplicateTravellers(
     supabase.from('trip_expenses').update({ given_by_person_id: to }).eq('given_by_person_id', from),
     supabase.from('trip_transfers').update({ from_person_id: to }).eq('from_person_id', from),
     supabase.from('trip_transfers').update({ to_person_id: to }).eq('to_person_id', from),
-    supabase.from('trip_settlements').update({ from_person_id: to }).eq('from_person_id', from),
-    supabase.from('trip_settlements').update({ to_person_id: to }).eq('to_person_id', from),
   ]);
   const results = await Promise.all(writes);
   for (const result of results) {
@@ -206,31 +216,30 @@ export async function pullDatabase(): Promise<boolean> {
   updateStatus({ status: 'syncing' });
 
   try {
-    const settlementsQuery = missingTables.has('trip_settlements')
-      ? Promise.resolve({ data: null, error: { message: 'skipped missing table' } as any })
-      : supabase.from('trip_settlements').select('*');
-    const profilesQuery = missingTables.has('trip_traveller_profiles')
-      ? Promise.resolve({ data: null, error: { message: 'skipped missing table' } as any })
-      : supabase.from('trip_traveller_profiles').select('*');
-
-    const [membersRes, expensesRes, transfersRes, assignmentsRes, budgetRes, settlementsRes, profilesRes] =
-      await Promise.all([
-        supabase.from('trip_members').select('*').order('created_at', { ascending: true }),
-        supabase.from('trip_expenses').select('*').order('trip_date', { ascending: true }),
-        supabase.from('trip_transfers').select('*').order('trip_date', { ascending: true }),
-        supabase.from('trip_assignments').select('*'),
-        supabase.from('trip_budget').select('*').eq('id', 'singleton').maybeSingle(),
-        settlementsQuery,
-        profilesQuery,
-      ]);
+    const [membersRes, expensesRes, transfersRes, assignmentsRes, budgetRowsRes] = await Promise.all([
+      supabase.from('trip_members').select('*').order('created_at', { ascending: true }),
+      supabase.from('trip_expenses').select('*').order('trip_date', { ascending: true }),
+      supabase.from('trip_transfers').select('*').order('trip_date', { ascending: true }),
+      supabase.from('trip_assignments').select('*'),
+      supabase
+        .from('trip_budget')
+        .select('*')
+        .in('id', ['singleton', SETTLEMENTS_BLOB_ID, PROFILES_BLOB_ID]),
+    ]);
 
     if (membersRes.error) throw membersRes.error;
     if (expensesRes.error) throw expensesRes.error;
     if (transfersRes.error) throw transfersRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
-    if (budgetRes.error) throw budgetRes.error;
-    if (settlementsRes.error) noteMissingTable('trip_settlements', settlementsRes.error);
-    if (profilesRes.error) noteMissingTable('trip_traveller_profiles', profilesRes.error);
+    if (budgetRowsRes.error) throw budgetRowsRes.error;
+
+    const budgetRows = budgetRowsRes.data || [];
+    const budgetRes = {
+      data: budgetRows.find((r: any) => r.id === 'singleton') || null,
+      error: null as any,
+    };
+    const settlementsBlobRow = budgetRows.find((r: any) => r.id === SETTLEMENTS_BLOB_ID);
+    const profilesBlobRow = budgetRows.find((r: any) => r.id === PROFILES_BLOB_ID);
 
     const rawMembers = (membersRes.data || []).map((r: any) => ({
       id: r.id as string,
@@ -308,22 +317,7 @@ export async function pullDatabase(): Promise<boolean> {
         : null;
 
     const localExpenses = getExpenseState();
-    const serverSettlements: DebtSettlement[] =
-      !settlementsRes.error && settlementsRes.data
-        ? (settlementsRes.data || []).map((r: any) => ({
-            id: r.id,
-            fromPersonId: personId(r.from_person_id, remap),
-            fromPersonName: r.from_person_name || '',
-            toPersonId: personId(r.to_person_id, remap),
-            toPersonName: r.to_person_name || '',
-            amountInr: r.amount_inr || 0,
-            note: r.note || undefined,
-            expenseId: r.expense_id || undefined,
-            paymentMethod: r.payment_method || 'unknown',
-            createdAt: r.created_at || 0,
-            source: r.source || 'manual',
-          }))
-        : [];
+    const serverSettlements = parseSettlementBlob(settlementsBlobRow?.categories, remap);
     const mergedExpenseRows = mergeById(
       expenses,
       localExpenses.expenses || [],
@@ -350,14 +344,8 @@ export async function pullDatabase(): Promise<boolean> {
 
     setAssignmentStateFromServer({ assignments });
 
-    if (!profilesRes.error && profilesRes.data) {
-      const profiles: TravellerProfile[] = (profilesRes.data || []).map((r: any) => ({
-        personId: personId(r.person_id, remap) || r.person_id,
-        personName: r.person_name || '',
-        photoDataUrl: r.photo_data_url || undefined,
-        updatedAt: Number(r.updated_at) || 0,
-      }));
-      setTravellerProfilesFromServer(profiles);
+    if (profilesBlobRow) {
+      setTravellerProfilesFromServer(parseProfileBlob(profilesBlobRow.categories, remap));
     }
 
     if (budget && budget.categories && budget.categories.length > 0) {
@@ -393,15 +381,11 @@ export async function pullDatabase(): Promise<boolean> {
     });
     lastSyncHash = hash;
 
-    const missingNote =
-      missingTables.size > 0
-        ? ` · Run APPLY_MISSING_TABLES.sql for: ${[...missingTables].join(', ')}`
-        : '';
     updateStatus({
       status: 'synced',
       lastSyncTime: Date.now(),
       serverVersion: version,
-      message: `Universal cloud database up to date${missingNote}`,
+      message: 'Universal cloud database up to date',
     });
     return true;
   } catch (err: any) {
@@ -420,28 +404,22 @@ export async function pullDatabase(): Promise<boolean> {
 export async function checkServerStatus(): Promise<void> {
   if (!supabaseConfigured || isSyncing) return;
   try {
-    const skipSettlements = missingTables.has('trip_settlements');
-    const [membersRes, expensesRes, transfersRes, assignmentsRes, settlementsRes, expenseTouchRes, settlementTouchRes] =
+    const [membersRes, expensesRes, transfersRes, assignmentsRes, expenseTouchRes, settlementsBlobRes] =
       await Promise.all([
         supabase.from('trip_members').select('id', { count: 'exact', head: true }),
         supabase.from('trip_expenses').select('id', { count: 'exact', head: true }),
         supabase.from('trip_transfers').select('id', { count: 'exact', head: true }),
         supabase.from('trip_assignments').select('id', { count: 'exact', head: true }),
-        skipSettlements
-          ? Promise.resolve({ data: null, count: 0, error: null as any })
-          : supabase.from('trip_settlements').select('id', { count: 'exact', head: true }),
         supabase
           .from('trip_expenses')
           .select('updated_at')
           .order('updated_at', { ascending: false })
           .limit(1),
-        skipSettlements
-          ? Promise.resolve({ data: null, error: null as any })
-          : supabase
-              .from('trip_settlements')
-              .select('created_at')
-              .order('created_at', { ascending: false })
-              .limit(1),
+        supabase
+          .from('trip_budget')
+          .select('categories, updated_at')
+          .eq('id', SETTLEMENTS_BLOB_ID)
+          .maybeSingle(),
       ]);
 
     const hardError =
@@ -453,14 +431,12 @@ export async function checkServerStatus(): Promise<void> {
       return;
     }
 
-    if (settlementsRes.error) noteMissingTable('trip_settlements', settlementsRes.error);
-    const settlementCount =
-      settlementsRes.error || skipSettlements ? 0 : settlementsRes.count || 0;
+    const settlementRows = Array.isArray(settlementsBlobRes.data?.categories)
+      ? settlementsBlobRes.data.categories
+      : [];
+    const settlementCount = settlementRows.length;
     const expenseTouch = Number(expenseTouchRes.data?.[0]?.updated_at || 0);
-    const settlementTouch =
-      settlementsRes.error || skipSettlements
-        ? 0
-        : Number(settlementTouchRes.data?.[0]?.created_at || 0);
+    const settlementTouch = Number(settlementsBlobRes.data?.updated_at || 0);
 
     const serverVersion = syncFingerprint({
       members: membersRes.count || 0,
@@ -552,25 +528,25 @@ export async function pushSync(): Promise<boolean> {
       source: t.source,
     }));
 
-    const settlementRows = (exp.settlements || []).map((s) => ({
+    const settlementBlob = (exp.settlements || []).map((s) => ({
       id: s.id,
-      from_person_id: personId(s.fromPersonId, remap),
-      from_person_name: s.fromPersonName,
-      to_person_id: personId(s.toPersonId, remap),
-      to_person_name: s.toPersonName,
-      amount_inr: s.amountInr,
+      fromPersonId: personId(s.fromPersonId, remap),
+      fromPersonName: s.fromPersonName,
+      toPersonId: personId(s.toPersonId, remap),
+      toPersonName: s.toPersonName,
+      amountInr: s.amountInr,
       note: s.note || null,
-      expense_id: s.expenseId || null,
-      payment_method: s.paymentMethod,
-      created_at: s.createdAt,
+      expenseId: s.expenseId || null,
+      paymentMethod: s.paymentMethod,
+      createdAt: s.createdAt,
       source: s.source,
     }));
 
-    const profileRows = listTravellerProfiles().map((p) => ({
-      person_id: personId(p.personId, remap) || p.personId,
-      person_name: p.personName,
-      photo_data_url: p.photoDataUrl || null,
-      updated_at: p.updatedAt,
+    const profileBlob = listTravellerProfiles().map((p) => ({
+      personId: personId(p.personId, remap) || p.personId,
+      personName: p.personName,
+      photoDataUrl: p.photoDataUrl || null,
+      updatedAt: p.updatedAt,
     }));
 
     const assignmentRows = asg.assignments.map((a) => ({
@@ -585,7 +561,7 @@ export async function pushSync(): Promise<boolean> {
       source: a.source,
     }));
 
-    type NamedUpsert = { table: string; optional?: boolean; run: () => PromiseLike<{ error: any }> };
+    type NamedUpsert = { table: string; run: () => PromiseLike<{ error: any }> };
     const upserts: NamedUpsert[] = [
       {
         table: 'trip_members',
@@ -603,22 +579,35 @@ export async function pushSync(): Promise<boolean> {
         table: 'trip_assignments',
         run: () => supabase.from('trip_assignments').upsert(assignmentRows, { onConflict: 'id' }),
       },
-    ];
-    if (!missingTables.has('trip_settlements')) {
-      upserts.push({
-        table: 'trip_settlements',
-        optional: true,
-        run: () => supabase.from('trip_settlements').upsert(settlementRows, { onConflict: 'id' }),
-      });
-    }
-    if (profileRows.length && !missingTables.has('trip_traveller_profiles')) {
-      upserts.push({
-        table: 'trip_traveller_profiles',
-        optional: true,
+      {
+        table: 'trip_budget',
         run: () =>
-          supabase.from('trip_traveller_profiles').upsert(profileRows, { onConflict: 'person_id' }),
-      });
-    }
+          supabase.from('trip_budget').upsert(
+            {
+              id: SETTLEMENTS_BLOB_ID,
+              categories: settlementBlob,
+              travelers: 0,
+              trip_target: 0,
+              updated_at: Date.now(),
+            },
+            { onConflict: 'id' },
+          ),
+      },
+      {
+        table: 'trip_budget',
+        run: () =>
+          supabase.from('trip_budget').upsert(
+            {
+              id: PROFILES_BLOB_ID,
+              categories: profileBlob,
+              travelers: 0,
+              trip_target: 0,
+              updated_at: Date.now(),
+            },
+            { onConflict: 'id' },
+          ),
+      },
+    ];
     if (budgetData) {
       upserts.push({
         table: 'trip_budget',
@@ -638,12 +627,7 @@ export async function pushSync(): Promise<boolean> {
 
     const results = await Promise.all(upserts.map(async (u) => ({ ...u, result: await u.run() })));
     for (const item of results) {
-      if (!item.result.error) continue;
-      if (item.optional && isMissingRelationError(item.result.error)) {
-        noteMissingTable(item.table, item.result.error);
-        continue;
-      }
-      throw item.result.error;
+      if (item.result.error) throw item.result.error;
     }
 
     const { data: serverMembers, error: memberListError } = await supabase
@@ -674,7 +658,7 @@ export async function pushSync(): Promise<boolean> {
       expenses: expenseRows.length,
       transfers: transferRows.length,
       assignments: assignmentRows.length,
-      settlements: settlementRows.length,
+      settlements: settlementBlob.length,
       expenseTouch,
       settlementTouch,
     });
@@ -743,16 +727,10 @@ export function initSyncEngine(): void {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_transfers' }, () => {
         pullDatabase().catch(() => {});
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_settlements' }, () => {
-        pullDatabase().catch(() => {});
-      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_assignments' }, () => {
         pullDatabase().catch(() => {});
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_members' }, () => {
-        pullDatabase().catch(() => {});
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_traveller_profiles' }, () => {
         pullDatabase().catch(() => {});
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_budget' }, () => {

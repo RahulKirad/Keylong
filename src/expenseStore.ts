@@ -467,13 +467,8 @@ export function addDebtSettlement(input: DebtSettlementInput): DebtSettlement {
 export async function deleteDebtSettlement(id: string): Promise<void> {
   state = { ...state, settlements: (state.settlements || []).filter((s) => s.id !== id) };
   save(state);
-  try {
-    const { supabase, supabaseConfigured } = await import('./supabaseClient');
-    if (!supabaseConfigured) return;
-    await supabase.from('trip_settlements').delete().eq('id', id);
-  } catch (e) {
-    console.warn('Failed to delete settlement from cloud:', e);
-  }
+  // Cloud copy lives in trip_budget blob — pushSync overwrites the full list.
+  window.dispatchEvent(new CustomEvent('trigger-cloud-sync'));
 }
 
 export async function deleteFundTransfer(id: string): Promise<void> {
