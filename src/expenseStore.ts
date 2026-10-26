@@ -6,8 +6,72 @@ import { registerTravellerSeeder } from './travellerSeed';
 import { collapseMembers, remapId, samePersonName, stableMemberId } from './memberIdentity';
 
 export const EXPENSE_STORAGE_KEY = 'winter-himachal-expenses-v1';
+const DELETED_EXPENSES_KEY = 'winter-himachal-deleted-expenses-v1';
+const DELETED_TRANSFERS_KEY = 'winter-himachal-deleted-transfers-v1';
+const DELETED_SETTLEMENTS_KEY = 'winter-himachal-deleted-settlements-v1';
+const TOMBSTONE_LIMIT = 400;
 
 export type TripMember = { id: string; name: string };
+
+function readTombstones(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeTombstones(key: string, ids: string[]): void {
+  const unique = [...new Set(ids.filter(Boolean))].slice(-TOMBSTONE_LIMIT);
+  localStorage.setItem(key, JSON.stringify(unique));
+}
+
+function noteTombstone(key: string, id: string): void {
+  if (!id) return;
+  writeTombstones(key, [...readTombstones(key), id]);
+}
+
+export function getDeletedExpenseIds(): Set<string> {
+  return new Set(readTombstones(DELETED_EXPENSES_KEY));
+}
+export function getDeletedTransferIds(): Set<string> {
+  return new Set(readTombstones(DELETED_TRANSFERS_KEY));
+}
+export function getDeletedSettlementIds(): Set<string> {
+  return new Set(readTombstones(DELETED_SETTLEMENTS_KEY));
+}
+
+/** Merge cloud tombstones into local storage (union). */
+export function mergeDeletedIdsFromServer(input: {
+  expenses?: string[];
+  transfers?: string[];
+  settlements?: string[];
+}): void {
+  if (input.expenses?.length) {
+    writeTombstones(DELETED_EXPENSES_KEY, [...readTombstones(DELETED_EXPENSES_KEY), ...input.expenses]);
+  }
+  if (input.transfers?.length) {
+    writeTombstones(DELETED_TRANSFERS_KEY, [...readTombstones(DELETED_TRANSFERS_KEY), ...input.transfers]);
+  }
+  if (input.settlements?.length) {
+    writeTombstones(DELETED_SETTLEMENTS_KEY, [
+      ...readTombstones(DELETED_SETTLEMENTS_KEY),
+      ...input.settlements,
+    ]);
+  }
+}
+
+/** Drop rows the user permanently deleted so a cloud pull cannot resurrect them. */
+export function filterOutDeletedRecords<T extends { id: string }>(
+  rows: T[],
+  deleted: Set<string>,
+): T[] {
+  if (!deleted.size) return rows;
+  return rows.filter((row) => !deleted.has(row.id));
+}
 
 export type PaymentMethod = 'cash' | 'online' | 'unknown';
 
@@ -224,9 +288,12 @@ function load(): ExpenseStoreState {
     const parsed = JSON.parse(raw) as ExpenseStoreState;
     return dedupeExpenseState({
       members: parsed.members || [],
-      expenses: (parsed.expenses || []).map(normalizeExpense),
-      transfers: parsed.transfers || [],
-      settlements: parsed.settlements || [],
+      expenses: filterOutDeletedRecords(
+        (parsed.expenses || []).map(normalizeExpense),
+        getDeletedExpenseIds(),
+      ),
+      transfers: filterOutDeletedRecords(parsed.transfers || [], getDeletedTransferIds()),
+      settlements: filterOutDeletedRecords(parsed.settlements || [], getDeletedSettlementIds()),
       pending: parsed.pending || [],
     });
   } catch {
@@ -243,11 +310,20 @@ function save(state: ExpenseStoreState): void {
 let state = load();
 
 export function setExpenseStateFromServer(serverState: ExpenseStoreState): void {
+  const deletedExpenses = getDeletedExpenseIds();
+  const deletedTransfers = getDeletedTransferIds();
+  const deletedSettlements = getDeletedSettlementIds();
   state = dedupeExpenseState({
     members: serverState.members || [],
-    expenses: (serverState.expenses || []).map(normalizeExpense),
-    transfers: serverState.transfers || [],
-    settlements: serverState.settlements || state.settlements || [],
+    expenses: filterOutDeletedRecords(
+      (serverState.expenses || []).map(normalizeExpense),
+      deletedExpenses,
+    ),
+    transfers: filterOutDeletedRecords(serverState.transfers || [], deletedTransfers),
+    settlements: filterOutDeletedRecords(
+      serverState.settlements || state.settlements || [],
+      deletedSettlements,
+    ),
     pending: state.pending || [],
   });
   localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(state));
@@ -481,12 +557,14 @@ function assertSufficientBalanceForState(input: ExpenseInput, editingId: string,
 }
 
 export async function deleteExpense(id: string): Promise<void> {
+  noteTombstone(DELETED_EXPENSES_KEY, id);
   state = { ...state, expenses: state.expenses.filter((e) => e.id !== id) };
   save(state);
   try {
     const { supabase, supabaseConfigured } = await import('./supabaseClient');
     if (!supabaseConfigured) return;
-    await supabase.from('trip_expenses').delete().eq('id', id);
+    const { error } = await supabase.from('trip_expenses').delete().eq('id', id);
+    if (error) console.warn('Failed to delete expense from cloud:', error.message);
   } catch (e) {
     console.warn('Failed to delete expense from cloud:', e);
   }
@@ -542,20 +620,24 @@ export function addDebtSettlement(input: DebtSettlementInput): DebtSettlement {
   return record;
 }
 
+/** Unmark paid — restores the pending debt in Splitwise totals. */
 export async function deleteDebtSettlement(id: string): Promise<void> {
+  noteTombstone(DELETED_SETTLEMENTS_KEY, id);
   state = { ...state, settlements: (state.settlements || []).filter((s) => s.id !== id) };
   save(state);
-  // Cloud copy lives in trip_budget blob — pushSync overwrites the full list.
+  // Cloud copy lives in trip_budget blob — pushSync overwrites the full list without this id.
   window.dispatchEvent(new CustomEvent('trigger-cloud-sync'));
 }
 
 export async function deleteFundTransfer(id: string): Promise<void> {
+  noteTombstone(DELETED_TRANSFERS_KEY, id);
   state = { ...state, transfers: state.transfers.filter((t) => t.id !== id) };
   save(state);
   try {
     const { supabase, supabaseConfigured } = await import('./supabaseClient');
     if (!supabaseConfigured) return;
-    await supabase.from('trip_transfers').delete().eq('id', id);
+    const { error } = await supabase.from('trip_transfers').delete().eq('id', id);
+    if (error) console.warn('Failed to delete transfer from cloud:', error.message);
   } catch (e) {
     console.warn('Failed to delete transfer from cloud:', e);
   }

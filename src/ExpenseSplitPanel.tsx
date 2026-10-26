@@ -526,8 +526,8 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                 <p className="expense-settle-kicker">Clear debts</p>
                 <h4>Pending pair totals</h4>
                 <p>
-                  Full list of who still needs to pay. Tap <b>Mark paid</b> when the money has been given (or say it in
-                  chat).
+                  Full list of who still needs to pay. Tap <b>Mark paid</b> when money is given, or{' '}
+                  <b>Unmark unpaid</b> below if someone was cleared by mistake.
                 </p>
               </div>
               <div className="expense-pair-board-tools">
@@ -694,6 +694,79 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                   onChange={setPairPage}
                 />
               </>
+            )}
+
+            {filteredPaid.length > 0 && (
+              <div className="expense-cleared-board" aria-label="Marked paid — unmark to restore">
+                <div className="expense-owing-roster-head">
+                  <strong>Marked paid</strong>
+                  <span>
+                    {filteredPaid.length} cleared · tap Unmark unpaid to put the debt back
+                  </span>
+                </div>
+                <ul className="expense-pair-list expense-cleared-list">
+                  {filteredPaid.slice(0, 20).map((s) => (
+                    <li key={s.id} className="expense-pair-row is-cleared">
+                      <div className="expense-pair-summary is-static">
+                        <div className="expense-pair-flow">
+                          <div className="expense-pair-person">
+                            <span className="expense-settle-avatar is-sm" aria-hidden>
+                              {s.fromPersonName.slice(0, 1).toUpperCase()}
+                            </span>
+                            <div>
+                              <small>Was marked paid</small>
+                              <strong>{s.fromPersonName}</strong>
+                            </div>
+                          </div>
+                          <span className="expense-pair-arrow" aria-hidden>
+                            →
+                          </span>
+                          <div className="expense-pair-person">
+                            <span className="expense-settle-avatar is-sm is-receive-tone" aria-hidden>
+                              {s.toPersonName.slice(0, 1).toUpperCase()}
+                            </span>
+                            <div>
+                              <small>Paid to</small>
+                              <strong>{s.toPersonName}</strong>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="expense-pair-amount">
+                          <small>Cleared</small>
+                          <strong>{fmt(s.amountInr)}</strong>
+                        </div>
+                        <div className="expense-pair-preview">
+                          <small>For</small>
+                          <strong>{s.note || 'Settlement'}</strong>
+                          <em>{formatLoggedAt(s.createdAt)}</em>
+                        </div>
+                      </div>
+                      <div className="expense-pair-action">
+                        <button
+                          type="button"
+                          className="expense-pair-unmark"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Unmark unpaid?\n\n${s.fromPersonName} → ${s.toPersonName}\n${fmt(s.amountInr)}\n\nThis puts the pending debt back in the list.`,
+                              )
+                            ) {
+                              deleteDebtSettlement(s.id);
+                            }
+                          }}
+                        >
+                          Unmark unpaid
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {filteredPaid.length > 20 && (
+                  <p className="traveller-ledger-hint">
+                    Showing 20 of {filteredPaid.length}. Open the <b>Paid / cleared</b> tab for the full list.
+                  </p>
+                )}
+              </div>
             )}
           </section>
         </div>
@@ -967,7 +1040,8 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
         <div className="expense-split-table-wrap">
           <h4 className="expense-summed-title">Paid / cleared settlements</h4>
           <p className="traveller-ledger-hint">
-            These amounts are removed from pending sums. Undo with Delete if marked by mistake.
+            These amounts are removed from pending sums. Tap <b>Unmark unpaid</b> if someone was cleared by mistake —
+            their debt returns to Clear debts and the totals.
           </p>
           {filteredPaid.length === 0 ? (
             <p className="traveller-ledger-empty">
@@ -999,14 +1073,18 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                     <td>
                       <button
                         type="button"
-                        className="expense-action-delete"
+                        className="expense-pair-unmark"
                         onClick={() => {
-                          if (window.confirm(`Undo payment of ${fmt(s.amountInr)} from ${s.fromPersonName} to ${s.toPersonName}?`)) {
+                          if (
+                            window.confirm(
+                              `Unmark unpaid?\n\n${s.fromPersonName} → ${s.toPersonName}\n${fmt(s.amountInr)}\n\nThis puts the pending debt back.`,
+                            )
+                          ) {
                             deleteDebtSettlement(s.id);
                           }
                         }}
                       >
-                        Undo
+                        Unmark unpaid
                       </button>
                     </td>
                   </tr>
