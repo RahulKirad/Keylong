@@ -6,6 +6,7 @@ import {
   ExpenseRecord,
   FundTransfer,
   TripMember,
+  DebtSettlement,
 } from './expenseStore';
 import {
   getAssignmentState,
@@ -14,6 +15,11 @@ import {
 } from './assignmentStore';
 import { BUDGET_STORAGE_KEY, BudgetCategory } from './budgetData';
 import { collapseMembers } from './memberIdentity';
+import {
+  listTravellerProfiles,
+  setTravellerProfilesFromServer,
+  type TravellerProfile,
+} from './travellerProfileStore';
 
 export type SyncStatusState = {
   status: 'synced' | 'syncing' | 'offline' | 'error';
@@ -62,15 +68,50 @@ function computeDataHash(data: {
   expenses: ExpenseRecord[];
   transfers: FundTransfer[];
   assignments: TripAssignment[];
+  settlements?: DebtSettlement[];
   budget: any;
 }): string {
+  const expenseTouch = (data.expenses || []).reduce(
+    (max, e) => Math.max(max, e.updatedAt || e.createdAt || 0),
+    0,
+  );
+  const settlementTouch = (data.settlements || []).reduce(
+    (max, s) => Math.max(max, s.createdAt || 0),
+    0,
+  );
   return JSON.stringify({
     m: data.members.length,
     e: data.expenses.length,
     t: data.transfers.length,
     a: data.assignments.length,
+    s: (data.settlements || []).length,
+    et: expenseTouch,
+    st: settlementTouch,
     b: data.budget ? 1 : 0,
   });
+}
+
+/** Shared fingerprint so every login detects the same expense / Splitwise revisions. */
+function syncFingerprint(input: {
+  members: number;
+  expenses: number;
+  transfers: number;
+  assignments: number;
+  settlements: number;
+  expenseTouch: number;
+  settlementTouch: number;
+}): number {
+  // Compact numeric version for poll compare (counts + second-resolution touches).
+  const touch =
+    Math.floor(Math.max(input.expenseTouch, input.settlementTouch) / 1000) % 1_000_000_000;
+  return (
+    input.members +
+    input.expenses * 3 +
+    input.transfers * 5 +
+    input.assignments * 7 +
+    input.settlements * 11 +
+    touch
+  );
 }
 
 function personId(id: string | undefined, remap: Map<string, string>): string {
@@ -97,6 +138,8 @@ async function removeDuplicateTravellers(
     supabase.from('trip_expenses').update({ given_by_person_id: to }).eq('given_by_person_id', from),
     supabase.from('trip_transfers').update({ from_person_id: to }).eq('from_person_id', from),
     supabase.from('trip_transfers').update({ to_person_id: to }).eq('to_person_id', from),
+    supabase.from('trip_settlements').update({ from_person_id: to }).eq('from_person_id', from),
+    supabase.from('trip_settlements').update({ to_person_id: to }).eq('to_person_id', from),
   ]);
   const results = await Promise.all(writes);
   for (const result of results) {
@@ -118,19 +161,23 @@ export async function pullDatabase(): Promise<boolean> {
   updateStatus({ status: 'syncing' });
 
   try {
-    const [membersRes, expensesRes, transfersRes, assignmentsRes, budgetRes] = await Promise.all([
-      supabase.from('trip_members').select('*').order('created_at', { ascending: true }),
-      supabase.from('trip_expenses').select('*').order('trip_date', { ascending: true }),
-      supabase.from('trip_transfers').select('*').order('trip_date', { ascending: true }),
-      supabase.from('trip_assignments').select('*'),
-      supabase.from('trip_budget').select('*').eq('id', 'singleton').maybeSingle(),
-    ]);
+    const [membersRes, expensesRes, transfersRes, assignmentsRes, budgetRes, settlementsRes, profilesRes] =
+      await Promise.all([
+        supabase.from('trip_members').select('*').order('created_at', { ascending: true }),
+        supabase.from('trip_expenses').select('*').order('trip_date', { ascending: true }),
+        supabase.from('trip_transfers').select('*').order('trip_date', { ascending: true }),
+        supabase.from('trip_assignments').select('*'),
+        supabase.from('trip_budget').select('*').eq('id', 'singleton').maybeSingle(),
+        supabase.from('trip_settlements').select('*'),
+        supabase.from('trip_traveller_profiles').select('*'),
+      ]);
 
     if (membersRes.error) throw membersRes.error;
     if (expensesRes.error) throw expensesRes.error;
     if (transfersRes.error) throw transfersRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (budgetRes.error) throw budgetRes.error;
+    // trip_settlements may be missing until migration — keep local then.
 
     const rawMembers = (membersRes.data || []).map((r: any) => ({
       id: r.id as string,
@@ -158,6 +205,13 @@ export async function pullDatabase(): Promise<boolean> {
       balanceHolderName: r.balance_holder_name || undefined,
       givenByPersonId: personId(r.given_by_person_id, remap) || undefined,
       givenByName: r.given_by_name || undefined,
+      countInTotal: r.count_in_total !== false,
+      splitEnabled: r.split_enabled !== false,
+      splitExcludedPersonIds: Array.isArray(r.split_excluded_person_ids)
+        ? (r.split_excluded_person_ids as string[])
+            .map((id: string) => personId(id, remap) || id)
+            .filter(Boolean)
+        : [],
       createdAt: r.created_at || 0,
       updatedAt: r.updated_at || 0,
       source: r.source || 'manual',
@@ -201,15 +255,41 @@ export async function pullDatabase(): Promise<boolean> {
         : null;
 
     const localExpenses = getExpenseState();
+    const settlements: DebtSettlement[] = !settlementsRes.error && settlementsRes.data
+      ? (settlementsRes.data || []).map((r: any) => ({
+          id: r.id,
+          fromPersonId: personId(r.from_person_id, remap),
+          fromPersonName: r.from_person_name || '',
+          toPersonId: personId(r.to_person_id, remap),
+          toPersonName: r.to_person_name || '',
+          amountInr: r.amount_inr || 0,
+          note: r.note || undefined,
+          expenseId: r.expense_id || undefined,
+          paymentMethod: r.payment_method || 'unknown',
+          createdAt: r.created_at || 0,
+          source: r.source || 'manual',
+        }))
+      : localExpenses.settlements || [];
     const mergedExpenses: ExpenseStoreState = {
       members: members.length > 0 ? members : localExpenses.members,
       expenses,
       transfers,
+      settlements,
       pending: localExpenses.pending || [],
     };
     setExpenseStateFromServer(mergedExpenses);
 
     setAssignmentStateFromServer({ assignments });
+
+    if (!profilesRes.error && profilesRes.data) {
+      const profiles: TravellerProfile[] = (profilesRes.data || []).map((r: any) => ({
+        personId: personId(r.person_id, remap) || r.person_id,
+        personName: r.person_name || '',
+        photoDataUrl: r.photo_data_url || undefined,
+        updatedAt: Number(r.updated_at) || 0,
+      }));
+      setTravellerProfilesFromServer(profiles);
+    }
 
     if (budget && budget.categories && budget.categories.length > 0) {
       try {
@@ -220,15 +300,32 @@ export async function pullDatabase(): Promise<boolean> {
       }
     }
 
-    const hash = computeDataHash({ members, expenses, transfers, assignments, budget });
-    const version = expenses.length + transfers.length + assignments.length + members.length;
+    const hash = computeDataHash({
+      members,
+      expenses,
+      transfers,
+      assignments,
+      settlements,
+      budget,
+    });
+    const expenseTouch = expenses.reduce((max, e) => Math.max(max, e.updatedAt || e.createdAt || 0), 0);
+    const settlementTouch = settlements.reduce((max, s) => Math.max(max, s.createdAt || 0), 0);
+    const version = syncFingerprint({
+      members: members.length,
+      expenses: expenses.length,
+      transfers: transfers.length,
+      assignments: assignments.length,
+      settlements: settlements.length,
+      expenseTouch,
+      settlementTouch,
+    });
     lastSyncHash = hash;
 
     updateStatus({
       status: 'synced',
       lastSyncTime: Date.now(),
       serverVersion: version,
-      message: 'Universal cloud database up to date',
+      message: 'Universal cloud database up to date — same Splitwise for all logins',
     });
     return true;
   } catch (err: any) {
@@ -243,40 +340,63 @@ export async function pullDatabase(): Promise<boolean> {
   }
 }
 
-/** Check if server has newer data by comparing row counts. */
+/** Check if server has newer Splitwise / expense data (counts + latest touch times). */
 export async function checkServerStatus(): Promise<void> {
   if (!supabaseConfigured || isSyncing) return;
   try {
-    const [membersRes, expensesRes, transfersRes, assignmentsRes] = await Promise.all([
-      supabase.from('trip_members').select('id', { count: 'exact', head: true }),
-      supabase.from('trip_expenses').select('id', { count: 'exact', head: true }),
-      supabase.from('trip_transfers').select('id', { count: 'exact', head: true }),
-      supabase.from('trip_assignments').select('id', { count: 'exact', head: true }),
-    ]);
+    const [membersRes, expensesRes, transfersRes, assignmentsRes, settlementsRes, expenseTouchRes, settlementTouchRes] =
+      await Promise.all([
+        supabase.from('trip_members').select('id', { count: 'exact', head: true }),
+        supabase.from('trip_expenses').select('id', { count: 'exact', head: true }),
+        supabase.from('trip_transfers').select('id', { count: 'exact', head: true }),
+        supabase.from('trip_assignments').select('id', { count: 'exact', head: true }),
+        supabase.from('trip_settlements').select('id', { count: 'exact', head: true }),
+        supabase
+          .from('trip_expenses')
+          .select('updated_at')
+          .order('updated_at', { ascending: false })
+          .limit(1),
+        supabase
+          .from('trip_settlements')
+          .select('created_at')
+          .order('created_at', { ascending: false })
+          .limit(1),
+      ]);
 
-    if (membersRes.error || expensesRes.error || transfersRes.error || assignmentsRes.error) {
+    const hardError =
+      membersRes.error || expensesRes.error || transfersRes.error || assignmentsRes.error;
+    if (hardError) {
       if (syncStatus.status !== 'error') {
         updateStatus({ status: 'error', message: 'Cloud database unreachable' });
       }
       return;
     }
 
-    const serverVersion =
-      (membersRes.count || 0) +
-      (expensesRes.count || 0) +
-      (transfersRes.count || 0) +
-      (assignmentsRes.count || 0);
+    // Settlements table may be missing until migration — treat as 0 then.
+    const settlementCount = settlementsRes.error ? 0 : settlementsRes.count || 0;
+    const expenseTouch = Number(expenseTouchRes.data?.[0]?.updated_at || 0);
+    const settlementTouch = settlementsRes.error
+      ? 0
+      : Number(settlementTouchRes.data?.[0]?.created_at || 0);
+
+    const serverVersion = syncFingerprint({
+      members: membersRes.count || 0,
+      expenses: expensesRes.count || 0,
+      transfers: transfersRes.count || 0,
+      assignments: assignmentsRes.count || 0,
+      settlements: settlementCount,
+      expenseTouch,
+      settlementTouch,
+    });
 
     if (serverVersion !== syncStatus.serverVersion) {
       await pullDatabase();
-    } else {
-      if (syncStatus.status !== 'synced') {
-        updateStatus({
-          status: 'synced',
-          lastSyncTime: Date.now(),
-          serverVersion,
-        });
-      }
+    } else if (syncStatus.status !== 'synced') {
+      updateStatus({
+        status: 'synced',
+        lastSyncTime: Date.now(),
+        serverVersion,
+      });
     }
   } catch (err) {
     if (syncStatus.status !== 'offline') {
@@ -324,6 +444,11 @@ export async function pushSync(): Promise<boolean> {
       balance_holder_name: e.balanceHolderName || null,
       given_by_person_id: personId(e.givenByPersonId, remap) || null,
       given_by_name: e.givenByName || null,
+      count_in_total: e.countInTotal !== false,
+      split_enabled: e.splitEnabled !== false,
+      split_excluded_person_ids: (e.splitExcludedPersonIds || [])
+        .map((id) => personId(id, remap) || id)
+        .filter(Boolean),
       created_at: e.createdAt,
       updated_at: e.updatedAt,
       source: e.source,
@@ -344,6 +469,27 @@ export async function pushSync(): Promise<boolean> {
       source: t.source,
     }));
 
+    const settlementRows = (exp.settlements || []).map((s) => ({
+      id: s.id,
+      from_person_id: personId(s.fromPersonId, remap),
+      from_person_name: s.fromPersonName,
+      to_person_id: personId(s.toPersonId, remap),
+      to_person_name: s.toPersonName,
+      amount_inr: s.amountInr,
+      note: s.note || null,
+      expense_id: s.expenseId || null,
+      payment_method: s.paymentMethod,
+      created_at: s.createdAt,
+      source: s.source,
+    }));
+
+    const profileRows = listTravellerProfiles().map((p) => ({
+      person_id: personId(p.personId, remap) || p.personId,
+      person_name: p.personName,
+      photo_data_url: p.photoDataUrl || null,
+      updated_at: p.updatedAt,
+    }));
+
     const assignmentRows = asg.assignments.map((a) => ({
       id: a.id,
       assignee_person_id: personId(a.assigneePersonId, remap),
@@ -361,7 +507,15 @@ export async function pushSync(): Promise<boolean> {
       Promise.resolve(supabase.from('trip_expenses').upsert(expenseRows, { onConflict: 'id' })),
       Promise.resolve(supabase.from('trip_transfers').upsert(transferRows, { onConflict: 'id' })),
       Promise.resolve(supabase.from('trip_assignments').upsert(assignmentRows, { onConflict: 'id' })),
+      Promise.resolve(supabase.from('trip_settlements').upsert(settlementRows, { onConflict: 'id' })),
     ];
+    if (profileRows.length) {
+      promises.push(
+        Promise.resolve(
+          supabase.from('trip_traveller_profiles').upsert(profileRows, { onConflict: 'person_id' }),
+        ),
+      );
+    }
 
     if (budgetData) {
       promises.push(
@@ -400,12 +554,36 @@ export async function pushSync(): Promise<boolean> {
       }
     }
 
-    const version = expenseRows.length + transferRows.length + assignmentRows.length + memberRows.length;
+    const expenseTouch = exp.expenses.reduce(
+      (max, e) => Math.max(max, e.updatedAt || e.createdAt || 0),
+      0,
+    );
+    const settlementTouch = (exp.settlements || []).reduce(
+      (max, s) => Math.max(max, s.createdAt || 0),
+      0,
+    );
+    const version = syncFingerprint({
+      members: memberRows.length,
+      expenses: expenseRows.length,
+      transfers: transferRows.length,
+      assignments: assignmentRows.length,
+      settlements: settlementRows.length,
+      expenseTouch,
+      settlementTouch,
+    });
+    lastSyncHash = computeDataHash({
+      members: collapsed.members,
+      expenses: exp.expenses,
+      transfers: exp.transfers,
+      assignments: asg.assignments,
+      settlements: exp.settlements || [],
+      budget: budgetData,
+    });
     updateStatus({
       status: 'synced',
       lastSyncTime: Date.now(),
       serverVersion: version,
-      message: 'Saved to universal cloud database',
+      message: 'Saved to universal cloud — all travellers see the same Splitwise',
     });
     return true;
   } catch (err: any) {
@@ -448,7 +626,7 @@ export function initSyncEngine(): void {
 
   pullDatabase().catch(() => {});
 
-  // Realtime subscription — instantly pulls when another device changes data
+  // Realtime — every login refreshes when expenses / mark-paid settlements change
   try {
     realtimeChannel = supabase
       .channel('trip-data-changes')
@@ -458,10 +636,16 @@ export function initSyncEngine(): void {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_transfers' }, () => {
         pullDatabase().catch(() => {});
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_settlements' }, () => {
+        pullDatabase().catch(() => {});
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_assignments' }, () => {
         pullDatabase().catch(() => {});
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_members' }, () => {
+        pullDatabase().catch(() => {});
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_traveller_profiles' }, () => {
         pullDatabase().catch(() => {});
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_budget' }, () => {

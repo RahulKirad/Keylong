@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
 import type { ExpenseRecord } from './expenseStore';
+import { expenseCountsInTotal } from './expenseStore';
 
 const DELETE_WIDTH = 88;
 const SWIPE_THRESHOLD = 48;
@@ -11,9 +12,17 @@ type Props = {
   metaLine?: string;
   onEdit: () => void;
   onDelete: () => void;
+  onToggleCountInTotal?: (checked: boolean) => void;
 };
 
-export default function ExpenseSwipeRow({ expense, amountLabel, metaLine, onEdit, onDelete }: Props) {
+export default function ExpenseSwipeRow({
+  expense,
+  amountLabel,
+  metaLine,
+  onEdit,
+  onDelete,
+  onToggleCountInTotal,
+}: Props) {
   const [offset, setOffset] = useState(0);
   const startX = useRef(0);
   const dragging = useRef(false);
@@ -63,6 +72,16 @@ export default function ExpenseSwipeRow({ expense, amountLabel, metaLine, onEdit
             {expense.category} · Paid by <strong>{expense.paidByName}</strong>
             {metaLine ? ` · ${metaLine}` : ''}
           </div>
+          {onToggleCountInTotal && (
+            <label className="expense-total-check expense-swipe-total-check">
+              <input
+                type="checkbox"
+                checked={expenseCountsInTotal(expense)}
+                onChange={(event) => onToggleCountInTotal(event.target.checked)}
+              />
+              <span>Add to total</span>
+            </label>
+          )}
         </div>
         <div className="expense-swipe-actions">
           <button type="button" aria-label="Edit" onClick={onEdit}>

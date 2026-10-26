@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ClipboardList, Mountain, Mic, Bot, Pencil, Trash2 } from 'lucide-react';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
+import NavCalculatorButton from './NavCalculatorButton';
+import ListFilterBar from './ListFilterBar';
 import {
   TripAssignment,
   allAssignments,
@@ -19,6 +21,9 @@ export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState(allAssignments());
   const [members, setMembers] = useState(getExpenseState().members);
   const [editing, setEditing] = useState<TripAssignment | null>(null);
+  const [search, setSearch] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState('all');
+  const [dayFilter, setDayFilter] = useState('all');
 
   const refresh = () => {
     setAssignments(allAssignments());
@@ -56,6 +61,19 @@ export default function AssignmentsPage() {
     refresh();
   }
 
+  const filteredAssignments = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return assignments.filter((a) => {
+      if (assigneeFilter !== 'all' && a.assigneePersonId !== assigneeFilter) return false;
+      if (dayFilter === 'none' && a.tripDayNumber != null) return false;
+      if (dayFilter !== 'all' && dayFilter !== 'none' && String(a.tripDayNumber) !== dayFilter) return false;
+      if (!q) return true;
+      return `${a.assigneeName} ${a.task} ${a.dateLabel || ''} Day ${a.tripDayNumber || ''}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [assignments, search, assigneeFilter, dayFilter]);
+
   return (
     <div className="app assignments-app">
       <header className="site-nav expenses-page-nav">
@@ -71,6 +89,7 @@ export default function AssignmentsPage() {
             <ClipboardList size={16} />
             Trip assignments
           </div>
+          <NavCalculatorButton />
         </div>
         <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link to="/" className="expenses-back-link">
@@ -105,6 +124,42 @@ export default function AssignmentsPage() {
 
           <TravellerAssignmentGrid members={members} assignments={assignments} />
 
+          <ListFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search task or traveller…"
+            resultCount={filteredAssignments.length}
+            resultLabel="tasks"
+            onClear={() => {
+              setSearch('');
+              setAssigneeFilter('all');
+              setDayFilter('all');
+            }}
+            filters={[
+              {
+                id: 'assignee',
+                label: 'Traveller',
+                value: assigneeFilter,
+                onChange: setAssigneeFilter,
+                options: [
+                  { value: 'all', label: 'All travellers' },
+                  ...members.map((m) => ({ value: m.id, label: m.name })),
+                ],
+              },
+              {
+                id: 'day',
+                label: 'Trip day',
+                value: dayFilter,
+                onChange: setDayFilter,
+                options: [
+                  { value: 'all', label: 'All days' },
+                  { value: 'none', label: 'No day linked' },
+                  ...getDays().map((d) => ({ value: String(d.day), label: `Day ${d.day}` })),
+                ],
+              },
+            ]}
+          />
+
           <div className="expenses-table-wrap assignment-list-table">
             <table className="expenses-table">
               <thead>
@@ -117,14 +172,16 @@ export default function AssignmentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {assignments.length === 0 && (
+                {filteredAssignments.length === 0 && (
                   <tr>
                     <td colSpan={5} className="expenses-empty">
-                      No assignments yet. Open the assistant → <b>Assign tasks</b> and say who should do what.
+                      {assignments.length === 0
+                        ? 'No assignments yet. Open the assistant → Assign tasks and say who should do what.'
+                        : 'No tasks match these filters.'}
                     </td>
                   </tr>
                 )}
-                {assignments.map((a) => (
+                {filteredAssignments.map((a) => (
                   <tr key={a.id}>
                     <td><strong>{a.assigneeName}</strong></td>
                     <td>{a.task}</td>

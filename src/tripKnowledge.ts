@@ -8,6 +8,7 @@ import {
   getTripPhases,
 } from './itineraryStore';
 import { mustCarryGroups, safetyCategories } from './tripData';
+import { buildLiveExpenseDebtDocument } from './liveExpenseAnswers';
 
 export function buildTripKnowledgeDocument(): string {
   const tripMeta = getTripMeta();
@@ -114,6 +115,8 @@ FLAT SAFETY TICK LIST:
 ${safetyChecklist.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 
 TOPICS YOU MAY DISCUSS (only when relevant to this trip): winter driving in Kinnaur and Spiti, altitude and cold weather packing, women-traveller safety on this trip, Sangla/Chitkul/Kalpa/Kaza/Langza access (planning only, not live status), natural calamity / road closure planning, must-carry packing lists, train and flight connections, budgeting for mountain travel, New Year in Kaza planning, Kufri→Delhi airport risk buffer.
+
+${buildLiveExpenseDebtDocument()}
 `.trim();
 }
 
@@ -135,7 +138,11 @@ DATA RULES:
    - No # headings. Be concise and practical for voice.
 4. PDF tags — ONLY when the user explicitly asks to download, export, or get a PDF. Never add a PDF tag for normal questions. When they ask, put EXACTLY ONE tag on its own line at the end:
    [PDF:itinerary] | [PDF:transport] | [PDF:safety] | [PDF:places] | [PDF:full]
-5. Expenses / balances: point to **Spiti Tour Expenses** or Log expense mode.
+5. MONEY / OWING / TO RECEIVE — CRITICAL:
+   - The LIVE SPLITWISE DEBTS block below is the ONLY source of truth for who owes whom, how much is pending, who should receive, settle-up, and net positions.
+   - Quote EXACT ₹ amounts and names from that block. Do not invent, estimate, or recompute differently.
+   - If the block says none pending, say so clearly.
+   - Prefer answering debt questions with bullets: who → whom → amount. Mention **Spiti Tour Expenses** only as a place to mark paid or see bill detail.
 6. Tasks: point to **Assignments** or Assign tasks mode.
 
 TRIP DATA:

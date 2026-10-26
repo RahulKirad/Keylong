@@ -4,6 +4,7 @@ import { ArrowLeft, CalendarDays, Mountain } from 'lucide-react';
 import ItineraryTables from './ItineraryTables';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
+import NavCalculatorButton from './NavCalculatorButton';
 
 const TRIP_TITLE = 'Spiti Tour 2026 | Interactive Journey';
 
@@ -32,6 +33,7 @@ export default function TripTablesPage() {
             <CalendarDays size={16} />
             Editable trip tables
           </div>
+          <NavCalculatorButton />
         </div>
         <div className="site-nav-row expenses-page-subnav trip-tables-subnav">
           <Link to="/" className="expenses-back-link">

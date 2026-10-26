@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
+import NavCalculatorButton from './NavCalculatorButton';
+import ListFilterBar from './ListFilterBar';
 import {
   PLACE_TEMP_PROFILES,
   TEMP_DATE_LABEL,
@@ -150,6 +152,9 @@ export default function TemperaturePage() {
   const [panelMode, setPanelMode] = useState<PanelMode>('forecast');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAllPlaces, setShowAllPlaces] = useState(false);
+  const [tempSearch, setTempSearch] = useState('');
+  const [placeFilter, setPlaceFilter] = useState('all');
+  const [bandFilter, setBandFilter] = useState('all');
   const [clock, setClock] = useState(() =>
     new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }),
   );
@@ -203,6 +208,17 @@ export default function TemperaturePage() {
     return cards.slice(start, start + 7);
   }, [cards, rangeTab, selectedIndex]);
 
+  const qTemp = tempSearch.trim().toLowerCase();
+
+  const filteredStripDays = useMemo(() => {
+    return stripDays.filter((c) => {
+      if (placeFilter !== 'all' && c.placeId !== placeFilter) return false;
+      if (bandFilter !== 'all' && c.band !== bandFilter) return false;
+      if (!qTemp) return true;
+      return `${c.placeName} ${c.label} ${c.condition} ${c.dateKey}`.toLowerCase().includes(qTemp);
+    });
+  }, [stripDays, placeFilter, bandFilter, qTemp]);
+
   const otherPlaces = useMemo(() => {
     const focusId = selected?.placeId;
     const list = PLACE_TEMP_PROFILES.filter((p) => p.placeId !== focusId).map((profile) => {
@@ -215,8 +231,14 @@ export default function TemperaturePage() {
         condition: conditionFor(band, reading.highC, profile.placeId),
       };
     });
-    return showAllPlaces ? list : list.slice(0, 3);
-  }, [cache, selected, showAllPlaces]);
+    const filtered = list.filter((row) => {
+      if (placeFilter !== 'all' && row.profile.placeId !== placeFilter) return false;
+      if (bandFilter !== 'all' && row.band !== bandFilter) return false;
+      if (!qTemp) return true;
+      return `${row.profile.name} ${row.condition}`.toLowerCase().includes(qTemp);
+    });
+    return showAllPlaces ? filtered : filtered.slice(0, 3);
+  }, [cache, selected, showAllPlaces, placeFilter, bandFilter, qTemp]);
 
   const rainBars = useMemo(() => {
     const base = selected?.precipChance ?? 20;
@@ -260,6 +282,7 @@ export default function TemperaturePage() {
             <Thermometer size={16} />
             Temperature · 23 Dec – 4 Jan
           </div>
+          <NavCalculatorButton />
         </div>
         <div className="site-nav-row expenses-page-subnav temperature-subnav">
           <Link to="/" className="expenses-back-link">
@@ -329,6 +352,44 @@ export default function TemperaturePage() {
 
           {status ? <p className="wx-status">{status}</p> : null}
 
+          <ListFilterBar
+            search={tempSearch}
+            onSearchChange={setTempSearch}
+            searchPlaceholder="Search place, date, condition…"
+            resultCount={filteredStripDays.length}
+            resultLabel="forecast days"
+            onClear={() => {
+              setTempSearch('');
+              setPlaceFilter('all');
+              setBandFilter('all');
+            }}
+            filters={[
+              {
+                id: 'place',
+                label: 'Place',
+                value: placeFilter,
+                onChange: setPlaceFilter,
+                options: [
+                  { value: 'all', label: 'All places' },
+                  ...PLACE_TEMP_PROFILES.map((p) => ({ value: p.placeId, label: p.name })),
+                ],
+              },
+              {
+                id: 'band',
+                label: 'Cold band',
+                value: bandFilter,
+                onChange: setBandFilter,
+                options: [
+                  { value: 'all', label: 'All bands' },
+                  { value: 'extreme', label: 'Extreme' },
+                  { value: 'cold', label: 'Cold' },
+                  { value: 'cool', label: 'Cool' },
+                  { value: 'mild', label: 'Mild' },
+                ],
+              },
+            ]}
+          />
+
           {panelMode === 'forecast' ? (
             <>
               <div className="wx-grid-top">
@@ -367,7 +428,7 @@ export default function TemperaturePage() {
                   </article>
 
                   <div className="wx-day-strip" role="list">
-                    {stripDays.map((day) => {
+                    {filteredStripDays.map((day) => {
                       const globalIndex = cards.findIndex((c) => c.dateKey === day.dateKey);
                       const Icon = dayIconVariant(globalIndex, day.band);
                       const active = day.dateKey === selected.dateKey;

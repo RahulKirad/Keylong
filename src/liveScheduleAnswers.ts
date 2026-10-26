@@ -15,7 +15,11 @@ function isFlightRow(mode: string, activity: string, notes: string): boolean {
 /** Questions that should be answered from the live trip tables, not stale chat memory. */
 export function wantsLiveScheduleAnswer(question: string): boolean {
   const lower = question.toLowerCase();
-  if (/\b(assign|expense|spent|paid|gave|balance|aadhaar|id proof|identity)\b/i.test(lower)) {
+  if (
+    /\b(assign|expense|spent|paid|gave|balance|owe|owes|owing|debt|settle|receive|aadhaar|id proof|identity)\b/i.test(
+      lower,
+    )
+  ) {
     return false;
   }
   return /\b(train|rail|flight|airline|itinerary|schedule|transport|bus|overnight bus|cab|22917|bdts|nzm|ai\d+|day\s*\d{1,2}|what('?s| is) (my|the) (plan|route))\b/i.test(

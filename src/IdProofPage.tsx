@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Download, IdCard, Mountain, Trash2 } from 'lucide-react';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
+import NavCalculatorButton from './NavCalculatorButton';
+import ListFilterBar from './ListFilterBar';
 import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import {
   deleteIdProof,
@@ -43,6 +45,8 @@ export default function IdProofPage() {
   const [downloading, setDownloading] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [idSearch, setIdSearch] = useState('');
+  const [idStatusFilter, setIdStatusFilter] = useState('all');
 
   useEffect(() => {
     document.title = 'Spiti Tour 2026 — ID proof';
@@ -137,6 +141,17 @@ export default function IdProofPage() {
 
   const image = fileDataUrl?.startsWith('data:image');
   const savedCount = roster.filter((row) => row.proof).length;
+  const filteredRoster = useMemo(() => {
+    const q = idSearch.trim().toLowerCase();
+    return roster.filter(({ travellerName, proof: rowProof }) => {
+      if (idStatusFilter === 'saved' && !rowProof) return false;
+      if (idStatusFilter === 'missing' && rowProof) return false;
+      if (!q) return true;
+      return `${travellerName} ${rowProof?.idType || ''} ${rowProof?.idNumber || ''} ${rowProof?.nameOnId || ''}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [roster, idSearch, idStatusFilter]);
 
   function bulkDownload() {
     setDownloading(true);
@@ -166,6 +181,7 @@ export default function IdProofPage() {
             <IdCard size={16} />
             ID proof for check-in
           </div>
+          <NavCalculatorButton />
         </div>
         <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link to="/" className="expenses-back-link">
@@ -329,6 +345,31 @@ export default function IdProofPage() {
               </button>
             </div>
 
+            <ListFilterBar
+              search={idSearch}
+              onSearchChange={setIdSearch}
+              searchPlaceholder="Search traveller or ID number…"
+              resultCount={filteredRoster.length}
+              resultLabel="travellers"
+              onClear={() => {
+                setIdSearch('');
+                setIdStatusFilter('all');
+              }}
+              filters={[
+                {
+                  id: 'status',
+                  label: 'Status',
+                  value: idStatusFilter,
+                  onChange: setIdStatusFilter,
+                  options: [
+                    { value: 'all', label: 'All' },
+                    { value: 'saved', label: 'Saved' },
+                    { value: 'missing', label: 'Missing' },
+                  ],
+                },
+              ]}
+            />
+
             <div className="id-roster-table-wrap">
               <table className="id-roster-table">
                 <thead>
@@ -343,7 +384,7 @@ export default function IdProofPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {roster.map(({ travellerName, proof: rowProof }) => {
+                  {filteredRoster.map(({ travellerName, proof: rowProof }) => {
                     const preview = rowProof?.fileDataUrl?.startsWith('data:image')
                       ? rowProof.fileDataUrl
                       : undefined;
@@ -378,7 +419,7 @@ export default function IdProofPage() {
             </div>
 
             <div className="id-roster-cards">
-              {roster.map(({ travellerName, proof: rowProof }) => {
+              {filteredRoster.map(({ travellerName, proof: rowProof }) => {
                 const preview = rowProof?.fileDataUrl?.startsWith('data:image')
                   ? rowProof.fileDataUrl
                   : undefined;

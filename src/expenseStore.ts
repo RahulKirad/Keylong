@@ -28,6 +28,12 @@ export type ExpenseRecord = {
   /** Who originally handed cash to the holder (optional note from chat). */
   givenByPersonId?: string;
   givenByName?: string;
+  /** When false, amount is logged but excluded from group / member totals. */
+  countInTotal: boolean;
+  /** When true (default), amount is split equally among travellers not in splitExcludedPersonIds. */
+  splitEnabled: boolean;
+  /** Travellers excluded from this expense’s equal split (e.g. not present for that meal). */
+  splitExcludedPersonIds: string[];
   createdAt: number;
   updatedAt: number;
   source: 'manual' | 'voice' | 'ai' | 'offline';
@@ -54,10 +60,26 @@ export type PendingExpenseUtterance = {
   createdAt: number;
 };
 
+/** Someone paid back what they owed on splits (clears pending debt). */
+export type DebtSettlement = {
+  id: string;
+  fromPersonId: string;
+  fromPersonName: string;
+  toPersonId: string;
+  toPersonName: string;
+  amountInr: number;
+  note?: string;
+  expenseId?: string;
+  paymentMethod: PaymentMethod;
+  createdAt: number;
+  source: ExpenseRecord['source'];
+};
+
 export type ExpenseStoreState = {
   members: TripMember[];
   expenses: ExpenseRecord[];
   transfers: FundTransfer[];
+  settlements: DebtSettlement[];
   pending: PendingExpenseUtterance[];
 };
 
@@ -80,7 +102,7 @@ function newId(): string {
 }
 
 function defaultState(): ExpenseStoreState {
-  return { members: [], expenses: [], transfers: [], pending: [] };
+  return { members: [], expenses: [], transfers: [], settlements: [], pending: [] };
 }
 
 function normalizeExpense(e: ExpenseRecord): ExpenseRecord {
@@ -88,6 +110,11 @@ function normalizeExpense(e: ExpenseRecord): ExpenseRecord {
     ...e,
     paymentMethod: e.paymentMethod || 'unknown',
     spentFromBalance: Boolean(e.spentFromBalance),
+    countInTotal: e.countInTotal !== false,
+    splitEnabled: e.splitEnabled !== false,
+    splitExcludedPersonIds: Array.isArray(e.splitExcludedPersonIds)
+      ? e.splitExcludedPersonIds.filter(Boolean)
+      : [],
   };
 }
 
@@ -98,16 +125,29 @@ export function dedupeExpenseState(input: ExpenseStoreState): ExpenseStoreState 
   return {
     ...input,
     members,
-    expenses: (input.expenses || []).map((expense) => ({
-      ...normalizeExpense(expense),
-      paidByPersonId: idOf(expense.paidByPersonId) || expense.paidByPersonId,
-      balanceHolderPersonId: idOf(expense.balanceHolderPersonId),
-      givenByPersonId: idOf(expense.givenByPersonId),
-    })),
+    expenses: (input.expenses || []).map((expense) => {
+      const normalized = normalizeExpense(expense);
+      return {
+        ...normalized,
+        paidByPersonId: idOf(expense.paidByPersonId) || expense.paidByPersonId,
+        balanceHolderPersonId: idOf(expense.balanceHolderPersonId),
+        givenByPersonId: idOf(expense.givenByPersonId),
+        splitExcludedPersonIds: normalized.splitExcludedPersonIds
+          .map((id) => idOf(id) || id)
+          .filter(Boolean),
+      };
+    }),
     transfers: (input.transfers || []).map((transfer) => ({
       ...transfer,
       fromPersonId: idOf(transfer.fromPersonId) || transfer.fromPersonId,
       toPersonId: idOf(transfer.toPersonId) || transfer.toPersonId,
+    })),
+    settlements: (input.settlements || []).map((settlement) => ({
+      ...settlement,
+      fromPersonId: idOf(settlement.fromPersonId) || settlement.fromPersonId,
+      toPersonId: idOf(settlement.toPersonId) || settlement.toPersonId,
+      amountInr: Math.max(0, Math.round(settlement.amountInr || 0)),
+      paymentMethod: settlement.paymentMethod || 'unknown',
     })),
   };
 }
@@ -121,6 +161,7 @@ function load(): ExpenseStoreState {
       members: parsed.members || [],
       expenses: (parsed.expenses || []).map(normalizeExpense),
       transfers: parsed.transfers || [],
+      settlements: parsed.settlements || [],
       pending: parsed.pending || [],
     });
   } catch {
@@ -141,6 +182,7 @@ export function setExpenseStateFromServer(serverState: ExpenseStoreState): void 
     members: serverState.members || [],
     expenses: (serverState.expenses || []).map(normalizeExpense),
     transfers: serverState.transfers || [],
+    settlements: serverState.settlements || state.settlements || [],
     pending: state.pending || [],
   });
   localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(state));
@@ -245,6 +287,9 @@ export type ExpenseInput = {
   balanceHolderName?: string;
   givenByPersonId?: string;
   givenByName?: string;
+  countInTotal?: boolean;
+  splitEnabled?: boolean;
+  splitExcludedPersonIds?: string[];
   source: ExpenseRecord['source'];
 };
 
@@ -286,6 +331,9 @@ export function addExpense(input: ExpenseInput): ExpenseRecord {
     amountInr: Math.max(0, Math.round(input.amountInr)),
     paymentMethod: input.paymentMethod || 'unknown',
     spentFromBalance: Boolean(input.spentFromBalance),
+    countInTotal: input.countInTotal !== false,
+    splitEnabled: input.splitEnabled !== false,
+    splitExcludedPersonIds: (input.splitExcludedPersonIds || []).filter(Boolean),
     balanceHolderPersonId: holderId,
     balanceHolderName: holder?.name || input.balanceHolderName,
     createdAt: now,
@@ -313,6 +361,12 @@ export function updateExpense(id: string, patch: Partial<ExpenseInput>): void {
     balanceHolderName: patch.balanceHolderName ?? existing.balanceHolderName,
     givenByPersonId: patch.givenByPersonId ?? existing.givenByPersonId,
     givenByName: patch.givenByName ?? existing.givenByName,
+    countInTotal: patch.countInTotal !== undefined ? patch.countInTotal : existing.countInTotal !== false,
+    splitEnabled: patch.splitEnabled !== undefined ? patch.splitEnabled : existing.splitEnabled !== false,
+    splitExcludedPersonIds:
+      patch.splitExcludedPersonIds !== undefined
+        ? patch.splitExcludedPersonIds.filter(Boolean)
+        : existing.splitExcludedPersonIds || [],
     source: patch.source ?? existing.source,
   };
   const others = state.expenses.filter((e) => e.id !== id);
@@ -374,6 +428,54 @@ export function addFundTransfer(input: FundTransferInput): FundTransfer {
   return record;
 }
 
+export type DebtSettlementInput = {
+  fromPersonId: string;
+  fromPersonName: string;
+  toPersonId: string;
+  toPersonName: string;
+  amountInr: number;
+  note?: string;
+  expenseId?: string;
+  paymentMethod?: PaymentMethod;
+  source: DebtSettlement['source'];
+};
+
+export function addDebtSettlement(input: DebtSettlementInput): DebtSettlement {
+  const amount = Math.max(0, Math.round(input.amountInr));
+  if (amount <= 0) throw new Error('Settlement amount must be greater than zero.');
+  if (input.fromPersonId === input.toPersonId) {
+    throw new Error('Cannot settle a debt to yourself.');
+  }
+  const record: DebtSettlement = {
+    id: newId(),
+    fromPersonId: input.fromPersonId,
+    fromPersonName: input.fromPersonName,
+    toPersonId: input.toPersonId,
+    toPersonName: input.toPersonName,
+    amountInr: amount,
+    note: input.note?.trim() || undefined,
+    expenseId: input.expenseId,
+    paymentMethod: input.paymentMethod || 'unknown',
+    createdAt: Date.now(),
+    source: input.source,
+  };
+  state = { ...state, settlements: [...(state.settlements || []), record] };
+  save(state);
+  return record;
+}
+
+export async function deleteDebtSettlement(id: string): Promise<void> {
+  state = { ...state, settlements: (state.settlements || []).filter((s) => s.id !== id) };
+  save(state);
+  try {
+    const { supabase, supabaseConfigured } = await import('./supabaseClient');
+    if (!supabaseConfigured) return;
+    await supabase.from('trip_settlements').delete().eq('id', id);
+  } catch (e) {
+    console.warn('Failed to delete settlement from cloud:', e);
+  }
+}
+
 export async function deleteFundTransfer(id: string): Promise<void> {
   state = { ...state, transfers: state.transfers.filter((t) => t.id !== id) };
   save(state);
@@ -398,26 +500,52 @@ export function removePending(id: string): void {
   save(state);
 }
 
+export function expenseCountsInTotal(e: ExpenseRecord): boolean {
+  return e.countInTotal !== false;
+}
+
 export function totalsByMember(): { member: TripMember; total: number }[] {
   const map = new Map<string, number>();
   for (const m of state.members) map.set(m.id, 0);
   for (const e of state.expenses) {
+    if (!expenseCountsInTotal(e)) continue;
     map.set(e.paidByPersonId, (map.get(e.paidByPersonId) || 0) + e.amountInr);
   }
   return state.members.map((m) => ({ member: m, total: map.get(m.id) || 0 }));
 }
 
 export function grandTotal(): number {
-  return state.expenses.reduce((s, e) => s + e.amountInr, 0);
+  return state.expenses.filter(expenseCountsInTotal).reduce((s, e) => s + e.amountInr, 0);
+}
+
+export function setExpenseCountInTotal(id: string, countInTotal: boolean): void {
+  const existing = state.expenses.find((e) => e.id === id);
+  if (!existing) return;
+  updateExpense(id, { countInTotal });
+}
+
+export function setExpenseSplitEnabled(id: string, splitEnabled: boolean): void {
+  const existing = state.expenses.find((e) => e.id === id);
+  if (!existing) return;
+  updateExpense(id, { splitEnabled });
+}
+
+export function setExpenseSplitExcluded(id: string, splitExcludedPersonIds: string[]): void {
+  const existing = state.expenses.find((e) => e.id === id);
+  if (!existing) return;
+  updateExpense(id, { splitExcludedPersonIds });
 }
 
 export function exportExpensesCsv(): string {
   const header =
-    'Date,Description,Category,Amount (INR),Paid by,Payment,From balance,Balance holder,Given by';
+    'Date,Description,Category,Amount (INR),Paid by,Payment,From balance,Balance holder,Given by,Count in total,Split,Excluded';
   const rows = state.expenses.map((e) => {
     const holder = e.spentFromBalance ? e.balanceHolderName || e.paidByName : '';
     const givenBy = e.givenByName || '';
-    return `"${e.dateLabel}","${e.description.replace(/"/g, '""')}","${e.category}",${e.amountInr},"${e.paidByName}","${e.paymentMethod}",${e.spentFromBalance ? 'yes' : 'no'},"${holder}","${givenBy}"`;
+    const excluded = (e.splitExcludedPersonIds || [])
+      .map((id) => state.members.find((m) => m.id === id)?.name || id)
+      .join('; ');
+    return `"${e.dateLabel}","${e.description.replace(/"/g, '""')}","${e.category}",${e.amountInr},"${e.paidByName}","${e.paymentMethod}",${e.spentFromBalance ? 'yes' : 'no'},"${holder}","${givenBy}",${expenseCountsInTotal(e) ? 'yes' : 'no'},${e.splitEnabled !== false ? 'yes' : 'no'},"${excluded.replace(/"/g, '""')}"`;
   });
   const transferHeader = '\n\nTransfers\nDate,From,To,Amount (INR),Payment,Note';
   const transferRows = state.transfers.map(
