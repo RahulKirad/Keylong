@@ -1,7 +1,49 @@
 import type { DebtSettlement, ExpenseRecord, TripMember } from './expenseStore';
+import { stableMemberId } from './memberIdentity';
 
 function countsInTotal(e: ExpenseRecord): boolean {
   return e.countInTotal !== false;
+}
+
+function normName(value: string | undefined): string {
+  return (value || '').trim().toLowerCase();
+}
+
+/** Prefer paidByName so a stale / duplicated person id cannot mark the wrong traveller as payer. */
+export function isExpensePayer(member: TripMember, expense: ExpenseRecord): boolean {
+  const paidName = normName(expense.paidByName);
+  if (paidName) return normName(member.name) === paidName;
+  if (!expense.paidByPersonId) return false;
+  return (
+    member.id === expense.paidByPersonId || stableMemberId(member.name) === expense.paidByPersonId
+  );
+}
+
+function findExpensePayer(expense: ExpenseRecord, members: TripMember[]): TripMember | undefined {
+  const paidName = normName(expense.paidByName);
+  if (paidName) {
+    const byName = members.find((m) => normName(m.name) === paidName);
+    if (byName) return byName;
+  }
+  if (!expense.paidByPersonId) return undefined;
+  return (
+    members.find((m) => m.id === expense.paidByPersonId) ||
+    members.find((m) => stableMemberId(m.name) === expense.paidByPersonId)
+  );
+}
+
+function memberIsExcluded(member: TripMember, excludedIds: Set<string>): boolean {
+  if (excludedIds.has(member.id)) return true;
+  if (excludedIds.has(stableMemberId(member.name))) return true;
+  const slug = normName(member.name).replace(/[^a-z0-9]+/g, '-');
+  if (!slug) return false;
+  for (const id of excludedIds) {
+    const key = id.toLowerCase();
+    if (key === `member-${slug}` || key.endsWith(`-${slug}`) || key.includes(`-${slug}-`)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export type SplitShareRow = {
@@ -46,17 +88,15 @@ export function participantsForExpense(
   members: TripMember[],
 ): { participants: TripMember[]; excluded: TripMember[] } {
   const excludedIds = excludedSet(expense);
-  const participants = members.filter((m) => !excludedIds.has(m.id));
-  const excluded = members.filter((m) => excludedIds.has(m.id));
+  const participants = members.filter((m) => !memberIsExcluded(m, excludedIds));
+  const excluded = members.filter((m) => memberIsExcluded(m, excludedIds));
   // Payer must stay in the split so their share is accounted for.
-  if (participants.every((m) => m.id !== expense.paidByPersonId)) {
-    const payer = members.find((m) => m.id === expense.paidByPersonId);
-    if (payer) {
-      return {
-        participants: [...participants, payer],
-        excluded: excluded.filter((m) => m.id !== payer.id),
-      };
-    }
+  const payer = findExpensePayer(expense, members);
+  if (payer && participants.every((m) => !isExpensePayer(m, expense))) {
+    return {
+      participants: [...participants, payer],
+      excluded: excluded.filter((m) => !isExpensePayer(m, expense)),
+    };
   }
   return { participants, excluded };
 }
@@ -85,13 +125,13 @@ export function buildExpenseSplitDetail(
 
   const payerIndex = Math.max(
     0,
-    participants.findIndex((m) => m.id === expense.paidByPersonId),
+    participants.findIndex((m) => isExpensePayer(m, expense)),
   );
   const shareAmounts = equalSharesInr(expense.amountInr, participants.length, payerIndex);
   const shares: SplitShareRow[] = participants.map((member, i) => ({
     member,
     shareInr: shareAmounts[i],
-    role: member.id === expense.paidByPersonId ? 'payer' : 'owes',
+    role: isExpensePayer(member, expense) ? 'payer' : 'owes',
   }));
   const owesToPayer = shares
     .filter((s) => s.role === 'owes' && s.shareInr > 0)
@@ -126,10 +166,11 @@ export function buildNetBalances(
   for (const m of members) net.set(m.id, 0);
 
   for (const detail of buildAllExpenseSplits(expenses, members)) {
-    const payerId = detail.expense.paidByPersonId;
+    const payer = findExpensePayer(detail.expense, members);
+    const payerId = payer?.id || detail.expense.paidByPersonId;
     for (const share of detail.shares) {
-      if (share.member.id === payerId) {
-        // Payer laid out full amount, their own share is their cost.
+      if (isExpensePayer(share.member, detail.expense)) {
+        // Payer laid out full amount; their own share is their cost.
         net.set(payerId, (net.get(payerId) || 0) + (detail.expense.amountInr - share.shareInr));
       } else {
         net.set(share.member.id, (net.get(share.member.id) || 0) - share.shareInr);
@@ -215,9 +256,11 @@ export function buildGrossPairDebts(
 ): SummedPairDebt[] {
   const map = new Map<string, SummedPairDebt>();
   for (const detail of buildAllExpenseSplits(expenses, members)) {
-    const payer = members.find((m) => m.id === detail.expense.paidByPersonId);
+    const payer = findExpensePayer(detail.expense, members);
     if (!payer) continue;
     for (const owe of detail.owesToPayer) {
+      // Skip only the real payer (by name). Duplicate hosted ids must not drop another traveller.
+      if (isExpensePayer(owe.member, detail.expense)) continue;
       const key = `${owe.member.id}→${payer.id}`;
       const existing = map.get(key);
       const part = {

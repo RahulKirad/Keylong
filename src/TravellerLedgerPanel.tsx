@@ -27,8 +27,9 @@ export default function TravellerLedgerPanel({ members, transfers, expenses }: P
     <aside className="traveller-ledger-panel">
       <h3>Traveller balances</h3>
       <p className="traveller-ledger-hint">
-        <b>Balance</b> = money others gave them minus spends marked “from balance”. Say in chat: “Rahul gave 5000 to
-        Sanket cash” or “Sanket spent 800 dinner from balance cash”.
+        <b>Balance</b> = money others gave them minus spends marked “from balance”. Pool managers (editable on the
+        highlighted cards) hold the shared trip float. Chat: “Milind gave 20000 to Sanket cash” or “Sanket spent 800
+        dinner from balance”.
       </p>
       <div className="traveller-ledger-table-wrap">
         <table className="traveller-ledger-table">

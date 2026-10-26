@@ -31,7 +31,13 @@ import ExpenseSplitPanel from './ExpenseSplitPanel';
 import ExpenseSpendBlocks from './ExpenseSpendBlocks';
 import TravellerAvatar from './TravellerAvatar';
 import ListFilterBar from './ListFilterBar';
+import PoolManagersBoard from './PoolManagersBoard';
 import { expenseIsSplit, participantsForExpense } from './expenseSplit';
+import {
+  confirmDeductFromPool,
+  poolsWithRemaining,
+  preferredPoolForExpense,
+} from './poolManagers';
 
 type ManualExpenseDraft = {
   dateLabel: string;
@@ -44,6 +50,9 @@ type ManualExpenseDraft = {
   splitEnabled: boolean;
   splitExcludedPersonIds: string[];
   countInTotal: boolean;
+  spentFromBalance: boolean;
+  balanceHolderPersonId: string;
+  balanceHolderName: string;
 };
 
 function emptyManualDraft(members: { id: string; name: string }[], signedIn: string | null): ManualExpenseDraft {
@@ -62,6 +71,9 @@ function emptyManualDraft(members: { id: string; name: string }[], signedIn: str
     splitEnabled: true,
     splitExcludedPersonIds: [],
     countInTotal: true,
+    spentFromBalance: false,
+    balanceHolderPersonId: payer?.id || '',
+    balanceHolderName: payer?.name || '',
   };
 }
 
@@ -237,6 +249,29 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
       tripDate: '2026-12-25',
       dateLabel: manual.dateLabel || '25 Dec',
     };
+
+    let spentFromBalance = manual.spentFromBalance;
+    let balanceHolderPersonId = manual.balanceHolderPersonId;
+    let balanceHolderName = manual.balanceHolderName;
+
+    if (!spentFromBalance) {
+      const pools = poolsWithRemaining(snap.members, snap.transfers, snap.expenses);
+      const preferred = preferredPoolForExpense(pools, manual.paidByPersonId);
+      if (preferred) {
+        const chosen = confirmDeductFromPool({
+          amountInr: manual.amountInr,
+          description: manual.description.trim(),
+          pools,
+          preferred,
+        });
+        if (chosen) {
+          spentFromBalance = true;
+          balanceHolderPersonId = chosen.member.id;
+          balanceHolderName = chosen.member.name;
+        }
+      }
+    }
+
     try {
       addExpense({
         tripDate: date.tripDate,
@@ -247,7 +282,9 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
         paidByPersonId: manual.paidByPersonId,
         paidByName: manual.paidByName,
         paymentMethod: manual.paymentMethod,
-        spentFromBalance: false,
+        spentFromBalance,
+        balanceHolderPersonId: spentFromBalance ? balanceHolderPersonId : undefined,
+        balanceHolderName: spentFromBalance ? balanceHolderName : undefined,
         countInTotal: manual.countInTotal,
         splitEnabled: manual.splitEnabled,
         splitExcludedPersonIds: manual.splitExcludedPersonIds,
@@ -435,6 +472,13 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
 
       <div className="expenses-layout">
         <div className="expenses-layout-main">
+          <PoolManagersBoard
+            members={snap.members}
+            transfers={snap.transfers}
+            expenses={snap.expenses}
+            onChanged={refresh}
+          />
+
           <div className="expenses-summary-grid">
             <article className="expenses-summary-card expenses-summary-total">
               <small>{focusName ? `${focusName.toUpperCase()} SPENT` : 'GROUP TOTAL SPENT'}</small>
@@ -888,6 +932,65 @@ export default function ExpensesSection({ standalone = false }: ExpensesSectionP
                 Split equally among travellers
               </label>
             </div>
+            {(() => {
+              const pools = poolsWithRemaining(snap.members, snap.transfers, snap.expenses);
+              if (!pools.length && !manual.spentFromBalance) return null;
+              return (
+                <div className="expense-pool-deduct">
+                  <label className="expense-check-label expense-pool-deduct-check">
+                    <input
+                      type="checkbox"
+                      checked={manual.spentFromBalance}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        const preferred =
+                          preferredPoolForExpense(pools, manual.paidByPersonId) || pools[0];
+                        setManual({
+                          ...manual,
+                          spentFromBalance: on,
+                          balanceHolderPersonId: on
+                            ? preferred?.member.id || manual.paidByPersonId
+                            : manual.balanceHolderPersonId,
+                          balanceHolderName: on
+                            ? preferred?.member.name || manual.paidByName
+                            : manual.balanceHolderName,
+                        });
+                      }}
+                    />
+                    Minus this from the shared balance travellers gave previously
+                  </label>
+                  {manual.spentFromBalance && (
+                    <label>
+                      Pool holder
+                      <select
+                        value={manual.balanceHolderPersonId}
+                        onChange={(e) => {
+                          const m = snap.members.find((x) => x.id === e.target.value);
+                          setManual({
+                            ...manual,
+                            balanceHolderPersonId: e.target.value,
+                            balanceHolderName: m?.name || manual.balanceHolderName,
+                          });
+                        }}
+                      >
+                        {(pools.length ? pools.map((p) => p.member) : snap.members).map((m) => {
+                          const rem = pools.find((p) => p.member.id === m.id)?.remainingInr;
+                          return (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                              {rem != null ? ` (₹${rem.toLocaleString('en-IN')} left)` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
+                  )}
+                  <p className="expense-pool-deduct-hint">
+                    If unchecked, you’ll still be asked on save when a pool manager has money left.
+                  </p>
+                </div>
+              );
+            })()}
             {manual.splitEnabled && (
               <div className="expense-split-exclude">
                 <div className="expense-split-exclude-label">Exclude from this spend</div>
