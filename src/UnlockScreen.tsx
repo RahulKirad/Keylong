@@ -3,6 +3,7 @@ import { Mountain, Lock } from 'lucide-react';
 import { listTravellerNames } from './travellerBrief';
 import { setSelectedTraveller } from './selectedTraveller';
 import { checkPassword, unlockApp } from './tripUnlock';
+import TravellerAvatar from './TravellerAvatar';
 
 type Props = {
   onUnlocked: () => void;
@@ -47,7 +48,7 @@ export default function UnlockScreen({ onUnlocked }: Props) {
 
         <div className="app-gate-names">
           <span className="app-gate-label">Traveller</span>
-          <div className="app-gate-name-tabs">
+          <div className="app-gate-name-tabs app-gate-profile-tabs">
             {names.map((item) => (
               <button
                 key={item}
@@ -58,7 +59,8 @@ export default function UnlockScreen({ onUnlocked }: Props) {
                   setError('');
                 }}
               >
-                {item}
+                <TravellerAvatar name={item} size="md" />
+                <span>{item}</span>
               </button>
             ))}
           </div>

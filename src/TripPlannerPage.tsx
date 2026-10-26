@@ -26,6 +26,7 @@ import {
   IdCard,
   Thermometer,
   BedDouble,
+  MapPinned,
 } from 'lucide-react';
 import HaltsStaysSection from './HaltsStaysSection';
 import TripCountdownDisplay from './TripCountdownDisplay';
@@ -33,6 +34,7 @@ import { useTripCountdown } from './useTripCountdown';
 import { assignmentsForDay, subscribeAssignments } from './assignmentStore';
 import SyncStatusBadge from './SyncStatusBadge';
 import NavTempBadge from './NavTempBadge';
+import NavCalculatorButton from './NavCalculatorButton';
 import AllenDraftModal from './AllenDraftModal';
 import FinalRouteItineraryModal from './FinalRouteItineraryModal';
 import { ALLEN_DRAFT } from './allenDraftAssets';
@@ -228,6 +230,7 @@ export default function TripPlannerPage() {
             </div>
             <TripCountdownDisplay countdown={tripCountdown} variant="nav" />
             <NavTempBadge />
+            <NavCalculatorButton />
             <SyncStatusBadge compact />
           </div>
           <div className="nav-dropdown" ref={navMenuRef}>
@@ -283,6 +286,9 @@ export default function TripPlannerPage() {
                   <Link to="/temperature" onClick={closeNav}>
                     <Thermometer size={15} /> Temperature
                   </Link>
+                  <Link to="/gps" onClick={closeNav}>
+                    <MapPinned size={15} /> GPS tracking
+                  </Link>
                   <button type="button" className="nav-allen-draft" onClick={() => openAllenDraft('pdf')}>
                     <FileText size={15} />
                     <span>
@@ -327,6 +333,7 @@ export default function TripPlannerPage() {
                   >
                     <Bot size={15} /> AI assistant
                   </button>
+                  <NavCalculatorButton variant="menu" onOpen={closeNav} />
                   <Link to="/expenses" onClick={closeNav}>
                     <Wallet size={15} /> Expenses page
                   </Link>
@@ -338,6 +345,9 @@ export default function TripPlannerPage() {
                   </Link>
                   <Link to="/temperature" onClick={closeNav}>
                     <Thermometer size={15} /> Temperature calendar
+                  </Link>
+                  <Link to="/gps" onClick={closeNav}>
+                    <MapPinned size={15} /> GPS tracking
                   </Link>
                   <Link to="/trip-tables" onClick={closeNav}>
                     <CalendarDays size={15} /> Trip tables page

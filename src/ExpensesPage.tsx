@@ -4,6 +4,7 @@ import { ArrowLeft, Mountain, Wallet } from 'lucide-react';
 import ExpensesSection from './ExpensesSection';
 import TripAssistant from './TripAssistant';
 import SyncStatusBadge from './SyncStatusBadge';
+import NavCalculatorButton from './NavCalculatorButton';
 
 const TRIP_TITLE = 'Spiti Tour 2026 | Interactive Journey';
 
@@ -32,6 +33,7 @@ export default function ExpensesPage() {
             <Wallet size={16} />
             Spiti Tour Expenses
           </div>
+          <NavCalculatorButton />
         </div>
         <div className="site-nav-row expenses-page-subnav" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link to="/" className="expenses-back-link">

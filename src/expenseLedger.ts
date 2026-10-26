@@ -53,7 +53,7 @@ export function buildTravellerLedger(
   expenses: ExpenseRecord[],
 ): TravellerLedgerRow[] {
   return members.map((member) => {
-    const paid = expenses.filter((e) => e.paidByPersonId === member.id);
+    const paid = expenses.filter((e) => e.paidByPersonId === member.id && e.countInTotal !== false);
     let cashSpent = 0;
     let onlineSpent = 0;
     for (const e of paid) {

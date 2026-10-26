@@ -85,6 +85,14 @@ export function personFromQuestion(text: string, fallback: string): string {
 export function topicsFromQuestion(text: string): PersonalTopic[] | null {
   const raw = text.trim().toLowerCase();
   if (!raw || /^(hi|hello|hey|thanks|thank you|ok|okay)\b[.! ]*$/.test(raw)) return null;
+  // Debt / settle-up / who-owes questions are handled by liveExpenseAnswers, not personal brief.
+  if (
+    /\b(owe|owes|owing|owed|debt|debts|settle[- ]?up|settle|settlement|to receive|receivable|who should pay|who owes|splitwise)\b/i.test(
+      raw,
+    )
+  ) {
+    return null;
+  }
   const namedSomeone = listTravellerNames().some((name) =>
     new RegExp(`\\b${escapeName(name)}(?:['’]s)?\\b`, 'i').test(text),
   );

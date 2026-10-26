@@ -6,9 +6,12 @@ import AssignmentsPage from './AssignmentsPage';
 import IdProofPage from './IdProofPage';
 import TemperaturePage from './TemperaturePage';
 import TripTablesPage from './TripTablesPage';
+import GpsTrackingPage from './GpsTrackingPage';
 import NavigationBridge from './NavigationBridge';
 import UnlockScreen from './UnlockScreen';
 import DailyTripReminder from './DailyTripReminder';
+import SmartCalculator from './SmartCalculator';
+import GpsTrackerBootstrap from './GpsTrackerBootstrap';
 import { isAppUnlocked } from './tripUnlock';
 
 export default function App() {
@@ -33,6 +36,8 @@ export default function App() {
     <BrowserRouter>
       <NavigationBridge />
       <DailyTripReminder />
+      <SmartCalculator />
+      <GpsTrackerBootstrap />
       <Routes>
         <Route path="/" element={<TripPlannerPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
@@ -40,6 +45,7 @@ export default function App() {
         <Route path="/id-proof" element={<IdProofPage />} />
         <Route path="/temperature" element={<TemperaturePage />} />
         <Route path="/trip-tables" element={<TripTablesPage />} />
+        <Route path="/gps" element={<GpsTrackingPage />} />
       </Routes>
     </BrowserRouter>
   );

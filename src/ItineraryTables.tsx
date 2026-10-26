@@ -9,6 +9,7 @@ import {
   type ItineraryState,
 } from './itineraryStore';
 import type { Day, Place, ScheduleRow, StayNight, TransportSegment, TripPhase } from './tripData';
+import ListFilterBar from './ListFilterBar';
 
 function cloneState(): ItineraryState {
   return structuredClone(getItineraryState());
@@ -137,6 +138,32 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
   };
 
   const dayCount = useMemo(() => draft.days.length, [draft.days.length]);
+  const [tableSearch, setTableSearch] = useState('');
+  const [dayFilter, setDayFilter] = useState('all');
+  const [sectionFilter, setSectionFilter] = useState('all');
+
+  const qTable = tableSearch.trim().toLowerCase();
+  const visibleDays = useMemo(() => {
+    return draft.days.filter((day) => {
+      if (dayFilter !== 'all' && String(day.day) !== dayFilter) return false;
+      if (!qTable) return true;
+      const blob = [
+        day.title,
+        day.date,
+        ...day.scheduleRows.flatMap((r) => [r.when, r.activity, r.mode, r.notes, r.overnight]),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return blob.includes(qTable);
+    });
+  }, [draft.days, dayFilter, qTable]);
+
+  const visiblePlaces = useMemo(() => {
+    if (!qTable) return draft.places;
+    return draft.places.filter((p) =>
+      `${p.name} ${p.region || ''} ${p.about || ''} ${p.stayName || ''}`.toLowerCase().includes(qTable),
+    );
+  }, [draft.places, qTable]);
 
   return (
     <section className={`section planner-section${standalone ? ' planner-section-standalone' : ''}`} id="planner">
@@ -173,6 +200,44 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
         </div>
       </div>
 
+      <ListFilterBar
+        search={tableSearch}
+        onSearchChange={setTableSearch}
+        searchPlaceholder="Search places, days, activities…"
+        resultCount={visibleDays.length + visiblePlaces.length}
+        resultLabel="matches"
+        onClear={() => {
+          setTableSearch('');
+          setDayFilter('all');
+          setSectionFilter('all');
+        }}
+        filters={[
+          {
+            id: 'day',
+            label: 'Trip day',
+            value: dayFilter,
+            onChange: setDayFilter,
+            options: [
+              { value: 'all', label: 'All days' },
+              ...draft.days.map((d) => ({ value: String(d.day), label: `Day ${d.day}` })),
+            ],
+          },
+          {
+            id: 'section',
+            label: 'Show section',
+            value: sectionFilter,
+            onChange: setSectionFilter,
+            options: [
+              { value: 'all', label: 'All sections' },
+              { value: 'days', label: 'Day schedules' },
+              { value: 'places', label: 'Places' },
+              { value: 'stays', label: 'Stays' },
+              { value: 'transport', label: 'Transport' },
+            ],
+          },
+        ]}
+      />
+
       {dirty && (
         <div className="planner-dirty-banner" role="status">
           You have unsaved edits. Tap <b>Update trip</b> to sync the map, train/flight sections, itinerary and
@@ -186,6 +251,7 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
         </div>
       )}
 
+      {(sectionFilter === 'all' || sectionFilter === 'places' || sectionFilter === 'stays') && (
       <div className="planner-phase">
         <div className="planner-phase-head">
           <div className="planner-phase-title-row">
@@ -225,7 +291,7 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
               </tr>
             </thead>
             <tbody>
-              {draft.places.map((place) => (
+              {visiblePlaces.map((place) => (
                 <tr key={place.id} className={place.isHalt ? 'planner-halt-row' : undefined}>
                   <td className="planner-place-id">{place.id}</td>
                   <td>
@@ -334,9 +400,12 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
             .join(' · ') || 'None marked yet'}
         </div>
       </div>
+      )}
 
-      {draft.tripPhases.map((phase) => {
-        const phaseDays = draft.days.filter((day) => day.phaseId === phase.id);
+      {(sectionFilter === 'all' || sectionFilter === 'days') &&
+      draft.tripPhases.map((phase) => {
+        const phaseDays = visibleDays.filter((day) => day.phaseId === phase.id);
+        if (!phaseDays.length && (dayFilter !== 'all' || qTable)) return null;
         return (
           <div key={phase.id} className="planner-phase">
             <div className="planner-phase-head">
@@ -469,6 +538,7 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
         );
       })}
 
+      {(sectionFilter === 'all' || sectionFilter === 'transport') && (
       <div className="planner-phase">
         <div className="planner-phase-head">
           <h3>Transport and booking summary</h3>
@@ -512,7 +582,9 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
           </table>
         </div>
       </div>
+      )}
 
+      {(sectionFilter === 'all' || sectionFilter === 'stays') && (
       <div className="planner-phase">
         <div className="planner-phase-head">
           <h3>Overnight accommodation checklist</h3>
@@ -623,6 +695,7 @@ export default function ItineraryTables({ standalone = false }: { standalone?: b
           </table>
         </div>
       </div>
+      )}
 
       {(dirty || savedFlash) && (
         <div className={`planner-sticky-bar${dirty ? ' dirty' : ' saved'}`}>

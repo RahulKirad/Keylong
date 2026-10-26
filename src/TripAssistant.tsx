@@ -38,9 +38,16 @@ import {
 } from './assistantBridge';
 import { addAssignment } from './assignmentStore';
 import { parseAssignmentUtterance } from './assignmentParse';
-import { addExpense, addFundTransfer, getExpenseState, queuePendingUtterance } from './expenseStore';
+import {
+  addDebtSettlement,
+  addExpense,
+  addFundTransfer,
+  getExpenseState,
+  queuePendingUtterance,
+} from './expenseStore';
 import { memberBalanceRemaining } from './expenseLedger';
 import { parseMoneyUtterance } from './expenseParse';
+import { outstandingBetweenSimple } from './expenseSplit';
 import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import { getDays, subscribeItinerary } from './itineraryStore';
 import {
@@ -65,6 +72,7 @@ import {
   tryUpdateIdFromChat,
   wantsIdAnswer,
 } from './liveIdProofAnswers';
+import { formatLiveExpenseReply, wantsLiveExpenseAnswer } from './liveExpenseAnswers';
 import { subscribeIdProofs } from './idProofStore';
 import { isTripRelatedQuestion, TRIP_SCOPE_REFUSAL } from './tripScope';
 import { formatLiveStayReply, wantsStayAnswer } from './liveStayAnswers';
@@ -134,15 +142,15 @@ function stopSpeaking() {
 }
 
 const TRIP_WELCOME =
-  'Hi! I’m your **Spiti Tour 2026** trip assistant. Ask about days, places, transport, or packing. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
+  'Hi! I’m your **Spiti Tour 2026** trip assistant. Ask about days, places, transport, packing, or **who owes / should receive** money. Say “download itinerary PDF” when you need documents. Tap **mic** to talk.';
 
 const ASSIGNMENTS_WELCOME =
   '**Assign tasks** — say who should do what, e.g. “Rahul is assigned to book the train tickets for 23rd” or “Sanket will confirm Kaza stay for 31 Dec”. I’ll add it to **Assignments** and highlight that day in the **itinerary**.';
 
 function welcomeForMode(m: AssistantMode, name: string): string {
-  const expense = `**Log expense** is for **${name}**. Say the date, what was bought, and the amount — for example “25 Dec dinner 2000 cash”. I will record it as paid by **${name}**. To hand someone cash, say “gave 5000 cash to another traveller”.`;
+  const expense = `**Log expense** (shared group ledger). You are signed in as **${name}**. Spends split among **everyone** by default. Example: “Sanket spent 17500 Rs on dinner exclude Allen, Piyu and Rutika”. When you repay someone, say “I have given the amount of train travel to Sanket” — that clears pending debt. Ask exact debts anytime: “Who owes whom?”, “How much do I owe?”, “How much should I receive?”, “How much does Rahul owe Sanket?”. Hand pool cash: “Rahul gave 5000 to Sanket cash”.`;
   const trip =
-    'I only answer **Spiti Tour 2026** questions — days, places, train/flight, packing, temperature, **your** tasks and spending. Example: “What is Sanket assigned?” or “Show Allen’s expenses”. Off-topic questions are declined.';
+    'I only answer **Spiti Tour 2026** questions — days, places, train/flight, packing, temperature, **your** tasks, spending, and **exact who owes / to receive**. Example: “Who owes me?” or “Show Allen’s expenses”. Off-topic questions are declined.';
   const body = m === 'expense' ? expense : m === 'assignments' ? ASSIGNMENTS_WELCOME : trip;
   return `Hi **${name}**. This login stays on your name.\n\n${body}`;
 }
@@ -204,6 +212,13 @@ export default function TripAssistant() {
   const listRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<ChatTurn[]>(initialGeminiHistory('trip', getSelectedTraveller()));
   const skipPersistRef = useRef(false);
+  /** Finalised speech chunks for the current mic session (full sentence). */
+  const speechFinalRef = useRef('');
+  const speechSilenceTimerRef = useRef<number | null>(null);
+  const speechIntentionalStopRef = useRef(false);
+  const listeningRef = useRef(false);
+  /** Wait this long after you stop talking before sending the full sentence. */
+  const SPEECH_SILENCE_MS = 2200;
 
   const startListenRef = useRef<() => void>(() => {});
 
@@ -421,8 +436,39 @@ export default function TripAssistant() {
           text: `Recorded money given\n\n• **${parsed.fromPersonName}** → **${parsed.toPersonName}**\n• **Amount:** ₹${parsed.amountInr.toLocaleString('en-IN')} (${pay})\n• **${parsed.toPersonName}'s balance** to spend: **₹${left.toLocaleString('en-IN')}**\n\nSee the traveller table on **Spiti Tour Expenses**.`,
         };
       }
+      if (parsed.kind === 'settle') {
+        if (!parsed.amountInr || parsed.amountInr <= 0) {
+          throw new Error(
+            `Nothing pending from ${parsed.fromPersonName} to ${parsed.toPersonName}${
+              parsed.note ? ` for “${parsed.note}”` : ''
+            }. Already cleared, or no matching split.`,
+          );
+        }
+        const record = addDebtSettlement(parsed);
+        const { expenses, members, settlements } = getExpenseState();
+        const still = outstandingBetweenSimple(
+          expenses,
+          members,
+          settlements || [],
+          record.fromPersonId,
+          record.toPersonId,
+        );
+        const pay =
+          record.paymentMethod === 'cash'
+            ? 'Cash'
+            : record.paymentMethod === 'online'
+              ? 'Online'
+              : 'Not specified';
+        return {
+          text: `Marked as **paid**\n\n• **${record.fromPersonName}** paid **${record.toPersonName}**\n• **Cleared:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})${
+            record.note ? `\n• **For:** ${record.note}` : ''
+          }\n• **Still pending** ${record.fromPersonName} → ${record.toPersonName}: **₹${still.toLocaleString('en-IN')}**${
+            still === 0 ? ' (fully cleared)' : ''
+          }\n\nSummed totals on **Spiti Tour Expenses** now hide cleared amounts.`,
+        };
+      }
       const record = addExpense(parsed);
-      const { transfers, expenses } = getExpenseState();
+      const { transfers, expenses, members } = getExpenseState();
       const pay =
         record.paymentMethod === 'cash'
           ? 'Cash'
@@ -436,8 +482,28 @@ export default function TripAssistant() {
         balanceLine = `\n• **From balance** (${record.balanceHolderName || record.paidByName}'s pool): **₹${record.amountInr.toLocaleString('en-IN')}** deducted. Remaining balance: **₹${left.toLocaleString('en-IN')}**.`;
       }
       const givenLine = record.givenByName ? `\n• **Originally from:** ${record.givenByName}` : '';
+      let splitLine = '';
+      if (record.splitEnabled !== false) {
+        const excludedIds = new Set(record.splitExcludedPersonIds || []);
+        const participants = members.filter((m) => !excludedIds.has(m.id));
+        const n = Math.max(1, participants.length);
+        const share = Math.round(record.amountInr / n);
+        const excludedNames = members
+          .filter((m) => excludedIds.has(m.id))
+          .map((m) => m.name)
+          .join(', ');
+        const oweNames = participants
+          .filter((m) => m.id !== record.paidByPersonId)
+          .map((m) => `${m.name} owes ₹${share.toLocaleString('en-IN')}`)
+          .join('; ');
+        splitLine = `\n• **Split:** ₹${share.toLocaleString('en-IN')} each among **${n}** travellers${
+          excludedNames ? `\n• **Excluded:** ${excludedNames}` : ''
+        }${oweNames ? `\n• **To be given to ${record.paidByName}:** ${oweNames}` : ''}`;
+      } else {
+        splitLine = '\n• **Split:** off (personal / not shared)';
+      }
       return {
-        text: `Recorded expense\n\n• **${record.dateLabel}** — ${record.description}\n• **Amount:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})\n• **Paid by:** ${record.paidByName}\n• **Category:** ${record.category}${balanceLine}${givenLine}\n\nUpdated on **Spiti Tour Expenses**.`,
+        text: `Recorded expense\n\n• **${record.dateLabel}** — ${record.description}\n• **Amount:** ₹${record.amountInr.toLocaleString('en-IN')} (${pay})\n• **Paid by:** ${record.paidByName}\n• **Category:** ${record.category}${balanceLine}${givenLine}${splitLine}\n\nSee **Spend compartments** and **Bill splits** on **Spiti Tour Expenses**.`,
       };
     } catch (e) {
       if (!online) {
@@ -513,6 +579,28 @@ export default function TripAssistant() {
               role: 'assistant',
               text: reply,
               idLink: true,
+            },
+          ]);
+          if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
+          setLoading(false);
+          return;
+        }
+
+        // Exact owe / receive / settle-up from live ledger — before personal brief or Gemini.
+        if (wantsLiveExpenseAnswer(trimmed)) {
+          const reply = formatLiveExpenseReply(trimmed, person);
+          historyRef.current = [
+            ...historyRef.current,
+            { role: 'user' as const, text: trimmed },
+            { role: 'model' as const, text: reply },
+          ].slice(-20);
+          setMessages((m) => [
+            ...m,
+            {
+              id: `a-${Date.now()}`,
+              role: 'assistant',
+              text: reply,
+              expensesLink: true,
             },
           ]);
           if (voiceMode && config.voiceEnabled) speak(reply, config.voiceLang);
@@ -615,8 +703,9 @@ export default function TripAssistant() {
           historyRef.current,
           [
             `SCOPE: Answer only Spiti Tour 2026 trip topics. If this message is unrelated, refuse and steer back to the trip.`,
-            `The traveller speaking is ${person}. If they ask about tasks, expenses, or spending, answer only for ${person}.`,
+            `The traveller speaking is ${person}. They may ask about anyone’s tasks or spending on this shared trip.`,
             `Prefer LIVE schedule/TRAIN/FLIGHT fields over any older chat turns.`,
+            `For owing / to-receive / settle-up amounts, use ONLY the LIVE SPLITWISE DEBTS block — exact ₹ figures, never guess.`,
             '',
             trimmed,
           ].join('\n'),
@@ -658,9 +747,43 @@ export default function TripAssistant() {
     [config, loading, voiceMode, modelOptions, mode],
   );
 
-  const stopListening = () => {
-    recognitionRef.current?.stop();
+  const clearSpeechSilenceTimer = () => {
+    if (speechSilenceTimerRef.current != null) {
+      window.clearTimeout(speechSilenceTimerRef.current);
+      speechSilenceTimerRef.current = null;
+    }
+  };
+
+  const finishSpeechAndSend = (raw: string) => {
+    clearSpeechSilenceTimer();
+    const text = raw.replace(/\s+/g, ' ').trim();
+    speechFinalRef.current = '';
+    speechIntentionalStopRef.current = true;
+    listeningRef.current = false;
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recognitionRef.current = null;
     setListening(false);
+    if (text) void sendMessage(text);
+  };
+
+  const stopListening = (opts?: { send?: boolean }) => {
+    clearSpeechSilenceTimer();
+    speechIntentionalStopRef.current = true;
+    listeningRef.current = false;
+    const text = (speechFinalRef.current || input).replace(/\s+/g, ' ').trim();
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recognitionRef.current = null;
+    setListening(false);
+    speechFinalRef.current = '';
+    if (opts?.send !== false && text) void sendMessage(text);
   };
 
   const startListening = () => {
@@ -670,27 +793,85 @@ export default function TripAssistant() {
       return;
     }
     stopSpeaking();
+    clearSpeechSilenceTimer();
+    speechFinalRef.current = '';
+    speechIntentionalStopRef.current = false;
+
     const rec = new Ctor();
     rec.lang = config.voiceLang;
     rec.interimResults = true;
-    rec.continuous = false;
+    // Keep the mic open so short pauses mid-sentence do not auto-send.
+    rec.continuous = true;
+
     rec.onresult = (ev) => {
-      const transcript = Array.from(ev.results).map((r) => r[0].transcript).join('');
-      setInput(transcript);
-      if (ev.results[0]?.isFinal) {
-        setListening(false);
-        rec.stop();
-        sendMessage(transcript);
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+        const piece = (ev.results[i][0]?.transcript || '').trim();
+        if (!piece) continue;
+        if (ev.results[i].isFinal) {
+          speechFinalRef.current = [speechFinalRef.current, piece].filter(Boolean).join(' ');
+        } else {
+          interim = [interim, piece].filter(Boolean).join(' ');
+        }
       }
+      const live = [speechFinalRef.current, interim].filter(Boolean).join(' ');
+      setInput(live);
+
+      // Only send after a clear pause — waits for the full sentence.
+      clearSpeechSilenceTimer();
+      speechSilenceTimerRef.current = window.setTimeout(() => {
+        const ready = speechFinalRef.current.replace(/\s+/g, ' ').trim();
+        if (!ready) return;
+        finishSpeechAndSend(ready);
+      }, SPEECH_SILENCE_MS);
     };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
+
+    rec.onerror = () => {
+      clearSpeechSilenceTimer();
+      listeningRef.current = false;
+      setListening(false);
+    };
+
+    rec.onend = () => {
+      // Chrome sometimes ends continuous sessions early — restart until we choose to stop.
+      if (!speechIntentionalStopRef.current && listeningRef.current) {
+        try {
+          rec.start();
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      listeningRef.current = false;
+      setListening(false);
+    };
+
     recognitionRef.current = rec;
+    listeningRef.current = true;
     setListening(true);
-    rec.start();
+    try {
+      rec.start();
+    } catch {
+      listeningRef.current = false;
+      setListening(false);
+    }
   };
 
   startListenRef.current = startListening;
+
+  useEffect(
+    () => () => {
+      clearSpeechSilenceTimer();
+      speechIntentionalStopRef.current = true;
+      listeningRef.current = false;
+      try {
+        recognitionRef.current?.abort();
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     registerAssistantOpener((m) => {
@@ -897,7 +1078,12 @@ export default function TripAssistant() {
                 className={`assistant-mic ${listening ? 'on' : ''}`}
                 aria-label={listening ? 'Stop' : 'Speak'}
                 disabled={!selectedName}
-                onClick={() => (listening ? stopListening() : startListening())}
+                onClick={() => (listening ? stopListening({ send: true }) : startListening())}
+                title={
+                  listening
+                    ? 'Tap when finished — sends your full sentence'
+                    : 'Speak your full sentence; sends after you pause'
+                }
               >
                 {listening ? <MicOff size={18} /> : <Mic size={18} />}
               </button>
@@ -906,11 +1092,11 @@ export default function TripAssistant() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   listening
-                    ? 'Listening…'
+                    ? 'Listening to your full sentence… pause when done'
                     : !selectedName
                       ? 'Chat starts after you pick a name'
                     : mode === 'expense'
-                      ? `Log an expense for ${selectedName}…`
+                      ? `e.g. Sanket spent 17500 on dinner exclude Allen, Piyu and Rutika`
                       : mode === 'assignments'
                         ? 'e.g. Rahul is assigned to book train tickets for 23rd…'
                         : `Ask about your tasks or spending, ${selectedName}…`

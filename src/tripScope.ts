@@ -1,13 +1,13 @@
 /** Hard scope: Spiti Tour 2026 chatbot answers trip topics only. */
 
 export const TRIP_SCOPE_REFUSAL = [
-  'I only help with **Spiti Tour 2026** — itinerary, places, train/flight, stays, packing, safety, temperature, expenses, assignments, and ID proof.',
+  'I only help with **Spiti Tour 2026** — itinerary, places, train/flight, stays, packing, safety, temperature, expenses (who owes / to receive), assignments, and ID proof.',
   '',
-  'Ask something about this trip (for example: “What’s the train?”, “What do we do on 28 Dec?”, or “Show my expenses”).',
+  'Ask something about this trip (for example: “What’s the train?”, “Who owes whom?”, or “How much should I receive?”).',
 ].join('\n');
 
 const TRIP_TOPIC =
-  /\b(spiti|himachal|kinnaur|tour|trip|itinerary|schedule|day\s*\d+|phase|place|stop|halt|overnight|stay|staying|hotel|homestay|home\s*stay|camping|accommodation|lodge|shimla|sangla|chitkul|kalpa|nako|tabo|kaza|langza|kufri|delhi|mumbai|pune|bandra|nizamuddin|train|22917|flight|ai\s*9825|bus|cab|driver|road|altitude|pack|packing|cold|snow|winter|temperature|weather|safety|budget|expense|spent|paid|balance|transfer|assign|task|aadhaar|aadhar|passport|id\s*proof|check-?in|pdf|download|map|route|traveller|member)\b/i;
+  /\b(spiti|himachal|kinnaur|tour|trip|itinerary|schedule|day\s*\d+|phase|place|stop|halt|overnight|stay|staying|hotel|homestay|home\s*stay|camping|accommodation|lodge|shimla|sangla|chitkul|kalpa|nako|tabo|kaza|langza|kufri|delhi|mumbai|pune|bandra|nizamuddin|train|22917|flight|ai\s*9825|bus|cab|driver|road|altitude|pack|packing|cold|snow|winter|temperature|weather|safety|budget|expense|spent|paid|balance|transfer|owe|owes|owing|debt|settle|settlement|receivable|receive|splitwise|assign|task|aadhaar|aadhar|passport|id\s*proof|check-?in|pdf|download|map|route|traveller|member)\b/i;
 
 const GREETING_OR_META =
   /^(hi|hello|hey|thanks|thank you|ok|okay|bye|good morning|good evening|help|what can you (do|help)|who are you)\b/i;
