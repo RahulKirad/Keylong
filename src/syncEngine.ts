@@ -62,6 +62,51 @@ function updateStatus(patch: Partial<SyncStatusState>) {
 
 let isSyncing = false;
 let lastSyncHash = '';
+/** Tables that 404'd on this project — skip until page reload after migrations. */
+const missingTables = new Set<string>();
+
+function isMissingRelationError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: string; message?: string; details?: string; hint?: string; status?: number };
+  const blob = `${e.code || ''} ${e.message || ''} ${e.details || ''} ${e.hint || ''}`.toLowerCase();
+  return (
+    e.code === '42P01' ||
+    e.code === 'PGRST205' ||
+    e.status === 404 ||
+    blob.includes('does not exist') ||
+    blob.includes('could not find the table') ||
+    blob.includes('schema cache')
+  );
+}
+
+function noteMissingTable(table: string, err: unknown): void {
+  if (!isMissingRelationError(err)) return;
+  if (!missingTables.has(table)) {
+    missingTables.add(table);
+    console.warn(
+      `[sync] Table "${table}" is missing on Supabase (404). Run supabase/APPLY_MISSING_TABLES.sql in the SQL Editor.`,
+    );
+  }
+}
+
+function mergeById<T extends { id: string }>(
+  serverRows: T[],
+  localRows: T[],
+  touch: (row: T) => number,
+): T[] {
+  const map = new Map<string, T>();
+  for (const row of serverRows) map.set(row.id, row);
+  for (const row of localRows) {
+    const existing = map.get(row.id);
+    if (!existing) {
+      // Keep local-only rows (just logged, not pushed yet) so they don't vanish on pull.
+      map.set(row.id, row);
+      continue;
+    }
+    if (touch(row) > touch(existing)) map.set(row.id, row);
+  }
+  return [...map.values()];
+}
 
 function computeDataHash(data: {
   members: TripMember[];
@@ -161,6 +206,13 @@ export async function pullDatabase(): Promise<boolean> {
   updateStatus({ status: 'syncing' });
 
   try {
+    const settlementsQuery = missingTables.has('trip_settlements')
+      ? Promise.resolve({ data: null, error: { message: 'skipped missing table' } as any })
+      : supabase.from('trip_settlements').select('*');
+    const profilesQuery = missingTables.has('trip_traveller_profiles')
+      ? Promise.resolve({ data: null, error: { message: 'skipped missing table' } as any })
+      : supabase.from('trip_traveller_profiles').select('*');
+
     const [membersRes, expensesRes, transfersRes, assignmentsRes, budgetRes, settlementsRes, profilesRes] =
       await Promise.all([
         supabase.from('trip_members').select('*').order('created_at', { ascending: true }),
@@ -168,8 +220,8 @@ export async function pullDatabase(): Promise<boolean> {
         supabase.from('trip_transfers').select('*').order('trip_date', { ascending: true }),
         supabase.from('trip_assignments').select('*'),
         supabase.from('trip_budget').select('*').eq('id', 'singleton').maybeSingle(),
-        supabase.from('trip_settlements').select('*'),
-        supabase.from('trip_traveller_profiles').select('*'),
+        settlementsQuery,
+        profilesQuery,
       ]);
 
     if (membersRes.error) throw membersRes.error;
@@ -177,7 +229,8 @@ export async function pullDatabase(): Promise<boolean> {
     if (transfersRes.error) throw transfersRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (budgetRes.error) throw budgetRes.error;
-    // trip_settlements may be missing until migration — keep local then.
+    if (settlementsRes.error) noteMissingTable('trip_settlements', settlementsRes.error);
+    if (profilesRes.error) noteMissingTable('trip_traveller_profiles', profilesRes.error);
 
     const rawMembers = (membersRes.data || []).map((r: any) => ({
       id: r.id as string,
@@ -190,7 +243,7 @@ export async function pullDatabase(): Promise<boolean> {
       await removeDuplicateTravellers(rawMembers, remap);
     }
 
-    const expenses = (expensesRes.data || []).map((r: any) => ({
+    const expenses: ExpenseRecord[] = (expensesRes.data || []).map((r: any) => ({
       id: r.id,
       tripDate: r.trip_date || '',
       dateLabel: r.date_label || '',
@@ -217,7 +270,7 @@ export async function pullDatabase(): Promise<boolean> {
       source: r.source || 'manual',
     }));
 
-    const transfers = (transfersRes.data || []).map((r: any) => ({
+    const transfers: FundTransfer[] = (transfersRes.data || []).map((r: any) => ({
       id: r.id,
       tripDate: r.trip_date || '',
       dateLabel: r.date_label || '',
@@ -255,25 +308,41 @@ export async function pullDatabase(): Promise<boolean> {
         : null;
 
     const localExpenses = getExpenseState();
-    const settlements: DebtSettlement[] = !settlementsRes.error && settlementsRes.data
-      ? (settlementsRes.data || []).map((r: any) => ({
-          id: r.id,
-          fromPersonId: personId(r.from_person_id, remap),
-          fromPersonName: r.from_person_name || '',
-          toPersonId: personId(r.to_person_id, remap),
-          toPersonName: r.to_person_name || '',
-          amountInr: r.amount_inr || 0,
-          note: r.note || undefined,
-          expenseId: r.expense_id || undefined,
-          paymentMethod: r.payment_method || 'unknown',
-          createdAt: r.created_at || 0,
-          source: r.source || 'manual',
-        }))
-      : localExpenses.settlements || [];
+    const serverSettlements: DebtSettlement[] =
+      !settlementsRes.error && settlementsRes.data
+        ? (settlementsRes.data || []).map((r: any) => ({
+            id: r.id,
+            fromPersonId: personId(r.from_person_id, remap),
+            fromPersonName: r.from_person_name || '',
+            toPersonId: personId(r.to_person_id, remap),
+            toPersonName: r.to_person_name || '',
+            amountInr: r.amount_inr || 0,
+            note: r.note || undefined,
+            expenseId: r.expense_id || undefined,
+            paymentMethod: r.payment_method || 'unknown',
+            createdAt: r.created_at || 0,
+            source: r.source || 'manual',
+          }))
+        : [];
+    const mergedExpenseRows = mergeById(
+      expenses,
+      localExpenses.expenses || [],
+      (e) => e.updatedAt || e.createdAt || 0,
+    );
+    const mergedTransfers = mergeById(
+      transfers,
+      localExpenses.transfers || [],
+      (t) => t.createdAt || 0,
+    );
+    const settlements = mergeById(
+      serverSettlements,
+      localExpenses.settlements || [],
+      (s) => s.createdAt || 0,
+    );
     const mergedExpenses: ExpenseStoreState = {
       members: members.length > 0 ? members : localExpenses.members,
-      expenses,
-      transfers,
+      expenses: mergedExpenseRows,
+      transfers: mergedTransfers,
       settlements,
       pending: localExpenses.pending || [],
     };
@@ -302,18 +371,21 @@ export async function pullDatabase(): Promise<boolean> {
 
     const hash = computeDataHash({
       members,
-      expenses,
-      transfers,
+      expenses: mergedExpenseRows,
+      transfers: mergedTransfers,
       assignments,
       settlements,
       budget,
     });
-    const expenseTouch = expenses.reduce((max, e) => Math.max(max, e.updatedAt || e.createdAt || 0), 0);
+    const expenseTouch = mergedExpenseRows.reduce(
+      (max, e) => Math.max(max, e.updatedAt || e.createdAt || 0),
+      0,
+    );
     const settlementTouch = settlements.reduce((max, s) => Math.max(max, s.createdAt || 0), 0);
     const version = syncFingerprint({
       members: members.length,
-      expenses: expenses.length,
-      transfers: transfers.length,
+      expenses: mergedExpenseRows.length,
+      transfers: mergedTransfers.length,
       assignments: assignments.length,
       settlements: settlements.length,
       expenseTouch,
@@ -321,11 +393,15 @@ export async function pullDatabase(): Promise<boolean> {
     });
     lastSyncHash = hash;
 
+    const missingNote =
+      missingTables.size > 0
+        ? ` · Run APPLY_MISSING_TABLES.sql for: ${[...missingTables].join(', ')}`
+        : '';
     updateStatus({
       status: 'synced',
       lastSyncTime: Date.now(),
       serverVersion: version,
-      message: 'Universal cloud database up to date — same Splitwise for all logins',
+      message: `Universal cloud database up to date${missingNote}`,
     });
     return true;
   } catch (err: any) {
@@ -344,23 +420,28 @@ export async function pullDatabase(): Promise<boolean> {
 export async function checkServerStatus(): Promise<void> {
   if (!supabaseConfigured || isSyncing) return;
   try {
+    const skipSettlements = missingTables.has('trip_settlements');
     const [membersRes, expensesRes, transfersRes, assignmentsRes, settlementsRes, expenseTouchRes, settlementTouchRes] =
       await Promise.all([
         supabase.from('trip_members').select('id', { count: 'exact', head: true }),
         supabase.from('trip_expenses').select('id', { count: 'exact', head: true }),
         supabase.from('trip_transfers').select('id', { count: 'exact', head: true }),
         supabase.from('trip_assignments').select('id', { count: 'exact', head: true }),
-        supabase.from('trip_settlements').select('id', { count: 'exact', head: true }),
+        skipSettlements
+          ? Promise.resolve({ data: null, count: 0, error: null as any })
+          : supabase.from('trip_settlements').select('id', { count: 'exact', head: true }),
         supabase
           .from('trip_expenses')
           .select('updated_at')
           .order('updated_at', { ascending: false })
           .limit(1),
-        supabase
-          .from('trip_settlements')
-          .select('created_at')
-          .order('created_at', { ascending: false })
-          .limit(1),
+        skipSettlements
+          ? Promise.resolve({ data: null, error: null as any })
+          : supabase
+              .from('trip_settlements')
+              .select('created_at')
+              .order('created_at', { ascending: false })
+              .limit(1),
       ]);
 
     const hardError =
@@ -372,12 +453,14 @@ export async function checkServerStatus(): Promise<void> {
       return;
     }
 
-    // Settlements table may be missing until migration — treat as 0 then.
-    const settlementCount = settlementsRes.error ? 0 : settlementsRes.count || 0;
+    if (settlementsRes.error) noteMissingTable('trip_settlements', settlementsRes.error);
+    const settlementCount =
+      settlementsRes.error || skipSettlements ? 0 : settlementsRes.count || 0;
     const expenseTouch = Number(expenseTouchRes.data?.[0]?.updated_at || 0);
-    const settlementTouch = settlementsRes.error
-      ? 0
-      : Number(settlementTouchRes.data?.[0]?.created_at || 0);
+    const settlementTouch =
+      settlementsRes.error || skipSettlements
+        ? 0
+        : Number(settlementTouchRes.data?.[0]?.created_at || 0);
 
     const serverVersion = syncFingerprint({
       members: membersRes.count || 0,
@@ -502,24 +585,44 @@ export async function pushSync(): Promise<boolean> {
       source: a.source,
     }));
 
-    const promises: Promise<any>[] = [
-      Promise.resolve(supabase.from('trip_members').upsert(memberRows, { onConflict: 'id' })),
-      Promise.resolve(supabase.from('trip_expenses').upsert(expenseRows, { onConflict: 'id' })),
-      Promise.resolve(supabase.from('trip_transfers').upsert(transferRows, { onConflict: 'id' })),
-      Promise.resolve(supabase.from('trip_assignments').upsert(assignmentRows, { onConflict: 'id' })),
-      Promise.resolve(supabase.from('trip_settlements').upsert(settlementRows, { onConflict: 'id' })),
+    type NamedUpsert = { table: string; optional?: boolean; run: () => PromiseLike<{ error: any }> };
+    const upserts: NamedUpsert[] = [
+      {
+        table: 'trip_members',
+        run: () => supabase.from('trip_members').upsert(memberRows, { onConflict: 'id' }),
+      },
+      {
+        table: 'trip_expenses',
+        run: () => supabase.from('trip_expenses').upsert(expenseRows, { onConflict: 'id' }),
+      },
+      {
+        table: 'trip_transfers',
+        run: () => supabase.from('trip_transfers').upsert(transferRows, { onConflict: 'id' }),
+      },
+      {
+        table: 'trip_assignments',
+        run: () => supabase.from('trip_assignments').upsert(assignmentRows, { onConflict: 'id' }),
+      },
     ];
-    if (profileRows.length) {
-      promises.push(
-        Promise.resolve(
-          supabase.from('trip_traveller_profiles').upsert(profileRows, { onConflict: 'person_id' }),
-        ),
-      );
+    if (!missingTables.has('trip_settlements')) {
+      upserts.push({
+        table: 'trip_settlements',
+        optional: true,
+        run: () => supabase.from('trip_settlements').upsert(settlementRows, { onConflict: 'id' }),
+      });
     }
-
+    if (profileRows.length && !missingTables.has('trip_traveller_profiles')) {
+      upserts.push({
+        table: 'trip_traveller_profiles',
+        optional: true,
+        run: () =>
+          supabase.from('trip_traveller_profiles').upsert(profileRows, { onConflict: 'person_id' }),
+      });
+    }
     if (budgetData) {
-      promises.push(
-        Promise.resolve(
+      upserts.push({
+        table: 'trip_budget',
+        run: () =>
           supabase.from('trip_budget').upsert(
             {
               id: 'singleton',
@@ -530,13 +633,17 @@ export async function pushSync(): Promise<boolean> {
             },
             { onConflict: 'id' },
           ),
-        ),
-      );
+      });
     }
 
-    const results = await Promise.all(promises);
-    for (const r of results) {
-      if (r.error) throw r.error;
+    const results = await Promise.all(upserts.map(async (u) => ({ ...u, result: await u.run() })));
+    for (const item of results) {
+      if (!item.result.error) continue;
+      if (item.optional && isMissingRelationError(item.result.error)) {
+        noteMissingTable(item.table, item.result.error);
+        continue;
+      }
+      throw item.result.error;
     }
 
     const { data: serverMembers, error: memberListError } = await supabase
