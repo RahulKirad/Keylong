@@ -261,7 +261,8 @@ export function buildGrossPairDebts(
     for (const owe of detail.owesToPayer) {
       // Skip only the real payer (by name). Duplicate hosted ids must not drop another traveller.
       if (isExpensePayer(owe.member, detail.expense)) continue;
-      const key = `${owe.member.id}→${payer.id}`;
+      // Key by name so two people who briefly shared an id never collapse into one debt.
+      const key = `${normName(owe.member.name)}→${normName(payer.name)}`;
       const existing = map.get(key);
       const part = {
         description: detail.expense.description,
@@ -303,7 +304,11 @@ export function buildSummedPairDebts(
   return gross
     .map((row) => {
       let remainingSettle = settlements
-        .filter((s) => s.fromPersonId === row.from.id && s.toPersonId === row.to.id)
+        .filter(
+          (s) =>
+            (s.fromPersonId === row.from.id || normName(s.fromPersonName) === normName(row.from.name)) &&
+            (s.toPersonId === row.to.id || normName(s.toPersonName) === normName(row.to.name)),
+        )
         .reduce((sum, s) => sum + s.amountInr, 0);
 
       const parts = row.parts.map((part) => {
@@ -327,12 +332,15 @@ export function buildReceiveSummaries(
   const pairs = buildSummedPairDebts(expenses, members, settlements);
   return members
     .map((member) => {
-      const inbound = pairs.filter((p) => p.to.id === member.id);
+      const inbound = pairs.filter(
+        (p) => p.to.id === member.id || normName(p.to.name) === normName(member.name),
+      );
       const fromMap = new Map<string, { member: TripMember; amountInr: number }>();
       for (const p of inbound) {
-        const cur = fromMap.get(p.from.id);
+        const key = normName(p.from.name) || p.from.id;
+        const cur = fromMap.get(key);
         if (cur) cur.amountInr += p.amountInr;
-        else fromMap.set(p.from.id, { member: p.from, amountInr: p.amountInr });
+        else fromMap.set(key, { member: p.from, amountInr: p.amountInr });
       }
       return {
         member,
@@ -352,12 +360,15 @@ export function buildPaySummaries(
   const pairs = buildSummedPairDebts(expenses, members, settlements);
   return members
     .map((member) => {
-      const outbound = pairs.filter((p) => p.from.id === member.id);
+      const outbound = pairs.filter(
+        (p) => p.from.id === member.id || normName(p.from.name) === normName(member.name),
+      );
       const toMap = new Map<string, { member: TripMember; amountInr: number }>();
       for (const p of outbound) {
-        const cur = toMap.get(p.to.id);
+        const key = normName(p.to.name) || p.to.id;
+        const cur = toMap.get(key);
         if (cur) cur.amountInr += p.amountInr;
-        else toMap.set(p.to.id, { member: p.to, amountInr: p.amountInr });
+        else toMap.set(key, { member: p.to, amountInr: p.amountInr });
       }
       return {
         member,

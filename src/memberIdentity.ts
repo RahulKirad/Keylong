@@ -10,16 +10,24 @@ export function stableMemberId(name: string): string {
   return `member-${slug || 'traveller'}`;
 }
 
+export function samePersonName(a: string | undefined, b: string | undefined): boolean {
+  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+}
+
 /**
- * Keep one record per name. Prefer the stable id when one of the copies already has it.
- * `remap` sends every dropped id to the id that is kept.
+ * Keep one record per name, then force every person onto a unique stable id
+ * (`member-<slug>`). Hosted data sometimes reuses one id for two travellers
+ * (e.g. Rahul + Sanket both share Sanket’s id) which drops someone from Splitwise.
+ *
+ * `remap` maps old ids → the keeper’s stable id. If two people shared one old id,
+ * the first person processed claims that remap; the second still gets their own
+ * new stable id (payer / splits resolve by name as a safety net).
  */
 export function collapseMembers<T extends NamedMember>(members: T[]): {
   members: T[];
   remap: Map<string, string>;
 } {
   const byName = new Map<string, T>();
-  const remap = new Map<string, string>();
 
   for (const member of members) {
     const key = member.name.trim().toLowerCase();
@@ -29,30 +37,32 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
       byName.set(key, member);
       continue;
     }
-    const keepNew = member.id.startsWith('member-') && !existing.id.startsWith('member-');
-    const keeper = keepNew ? member : existing;
-    const dropped = keepNew ? existing : member;
-    byName.set(key, keeper);
-    if (dropped.id !== keeper.id) remap.set(dropped.id, keeper.id);
+    const stable = stableMemberId(member.name);
+    const keepNew =
+      (member.id === stable && existing.id !== stable) ||
+      (member.id.startsWith('member-') && !existing.id.startsWith('member-'));
+    byName.set(key, keepNew ? member : existing);
   }
 
-  // Different names must never share one id (hosted sync sometimes reuses a payer id).
+  const remap = new Map<string, string>();
   const usedIds = new Set<string>();
   const unique: T[] = [];
+
   for (const member of byName.values()) {
-    let next = member;
-    if (!next.id || usedIds.has(next.id)) {
-      // Keep the first owner of the shared id; give this traveller a fresh stable id.
-      // Do not remap the shared id — it still belongs to the earlier keeper (e.g. Sanket).
-      let id = stableMemberId(next.name);
-      if (!id || usedIds.has(id)) id = `${stableMemberId(next.name)}-${unique.length + 1}`;
-      next = { ...member, id };
+    let id = stableMemberId(member.name);
+    if (usedIds.has(id)) id = `${id}-${unique.length + 1}`;
+
+    const oldId = (member.id || '').trim();
+    if (oldId && oldId !== id && !remap.has(oldId)) {
+      // First claimant of a duplicated old id wins the remap entry.
+      remap.set(oldId, id);
     }
-    usedIds.add(next.id);
-    unique.push(next);
+
+    usedIds.add(id);
+    unique.push({ ...member, id });
   }
 
-  const keeperIds = new Set(unique.map((member) => member.id));
+  // Flatten remap chains and drop identity mappings.
   for (const [from, to] of [...remap.entries()]) {
     let cursor = to;
     const seen = new Set<string>();
@@ -60,7 +70,10 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
       seen.add(cursor);
       cursor = remap.get(cursor)!;
     }
-    remap.set(from, keeperIds.has(cursor) ? cursor : to);
+    const keeperIds = new Set(unique.map((m) => m.id));
+    const resolved = keeperIds.has(cursor) ? cursor : to;
+    if (from === resolved) remap.delete(from);
+    else remap.set(from, resolved);
   }
 
   return { members: unique, remap };
