@@ -3,7 +3,7 @@ import type { Day } from './tripData';
 import { memberBalanceRemaining } from './expenseLedger';
 import { DEFAULT_TRAVELLER_NAMES } from './defaultTravellers';
 import { registerTravellerSeeder } from './travellerSeed';
-import { collapseMembers, remapId, stableMemberId } from './memberIdentity';
+import { collapseMembers, remapId, samePersonName, stableMemberId } from './memberIdentity';
 
 export const EXPENSE_STORAGE_KEY = 'winter-himachal-expenses-v1';
 
@@ -118,7 +118,22 @@ function normalizeExpense(e: ExpenseRecord): ExpenseRecord {
   };
 }
 
-/** One record per name, and point expenses and transfers at the record that is kept. */
+/** Resolve a person by display name first (hosted duplicate ids), else remap id. */
+function memberIdByNameOrRemap(
+  members: TripMember[],
+  name: string | undefined,
+  id: string | undefined,
+  remap: Map<string, string>,
+): string | undefined {
+  if (name) {
+    const byName = members.find((m) => samePersonName(m.name, name));
+    if (byName) return byName.id;
+  }
+  if (!id) return undefined;
+  return remapId(id, remap) || id;
+}
+
+/** One record per name, unique stable ids, and point expenses/transfers at keepers. */
 export function dedupeExpenseState(input: ExpenseStoreState): ExpenseStoreState {
   const { members, remap } = collapseMembers(input.members || []);
   const idOf = (id?: string) => remapId(id, remap);
@@ -127,28 +142,78 @@ export function dedupeExpenseState(input: ExpenseStoreState): ExpenseStoreState 
     members,
     expenses: (input.expenses || []).map((expense) => {
       const normalized = normalizeExpense(expense);
+      const paidByPersonId =
+        memberIdByNameOrRemap(members, expense.paidByName, expense.paidByPersonId, remap) ||
+        expense.paidByPersonId;
+      const balanceHolderPersonId = memberIdByNameOrRemap(
+        members,
+        expense.balanceHolderName,
+        expense.balanceHolderPersonId,
+        remap,
+      );
+      const givenByPersonId = memberIdByNameOrRemap(
+        members,
+        expense.givenByName,
+        expense.givenByPersonId,
+        remap,
+      );
+      // Exclusions: remap ids, then drop any that still collide with the payer.
+      const splitExcludedPersonIds = [
+        ...new Set(
+          normalized.splitExcludedPersonIds
+            .map((id) => idOf(id) || id)
+            .filter((id) => id && id !== paidByPersonId),
+        ),
+      ];
       return {
         ...normalized,
-        paidByPersonId: idOf(expense.paidByPersonId) || expense.paidByPersonId,
-        balanceHolderPersonId: idOf(expense.balanceHolderPersonId),
-        givenByPersonId: idOf(expense.givenByPersonId),
-        splitExcludedPersonIds: normalized.splitExcludedPersonIds
-          .map((id) => idOf(id) || id)
-          .filter(Boolean),
+        paidByPersonId,
+        paidByName:
+          members.find((m) => m.id === paidByPersonId)?.name || expense.paidByName,
+        balanceHolderPersonId,
+        balanceHolderName: balanceHolderPersonId
+          ? members.find((m) => m.id === balanceHolderPersonId)?.name || expense.balanceHolderName
+          : undefined,
+        givenByPersonId,
+        givenByName: givenByPersonId
+          ? members.find((m) => m.id === givenByPersonId)?.name || expense.givenByName
+          : undefined,
+        splitExcludedPersonIds,
       };
     }),
-    transfers: (input.transfers || []).map((transfer) => ({
-      ...transfer,
-      fromPersonId: idOf(transfer.fromPersonId) || transfer.fromPersonId,
-      toPersonId: idOf(transfer.toPersonId) || transfer.toPersonId,
-    })),
-    settlements: (input.settlements || []).map((settlement) => ({
-      ...settlement,
-      fromPersonId: idOf(settlement.fromPersonId) || settlement.fromPersonId,
-      toPersonId: idOf(settlement.toPersonId) || settlement.toPersonId,
-      amountInr: Math.max(0, Math.round(settlement.amountInr || 0)),
-      paymentMethod: settlement.paymentMethod || 'unknown',
-    })),
+    transfers: (input.transfers || []).map((transfer) => {
+      const fromPersonId =
+        memberIdByNameOrRemap(members, transfer.fromPersonName, transfer.fromPersonId, remap) ||
+        transfer.fromPersonId;
+      const toPersonId =
+        memberIdByNameOrRemap(members, transfer.toPersonName, transfer.toPersonId, remap) ||
+        transfer.toPersonId;
+      return {
+        ...transfer,
+        fromPersonId,
+        fromPersonName: members.find((m) => m.id === fromPersonId)?.name || transfer.fromPersonName,
+        toPersonId,
+        toPersonName: members.find((m) => m.id === toPersonId)?.name || transfer.toPersonName,
+      };
+    }),
+    settlements: (input.settlements || []).map((settlement) => {
+      const fromPersonId =
+        memberIdByNameOrRemap(members, settlement.fromPersonName, settlement.fromPersonId, remap) ||
+        settlement.fromPersonId;
+      const toPersonId =
+        memberIdByNameOrRemap(members, settlement.toPersonName, settlement.toPersonId, remap) ||
+        settlement.toPersonId;
+      return {
+        ...settlement,
+        fromPersonId,
+        fromPersonName:
+          members.find((m) => m.id === fromPersonId)?.name || settlement.fromPersonName,
+        toPersonId,
+        toPersonName: members.find((m) => m.id === toPersonId)?.name || settlement.toPersonName,
+        amountInr: Math.max(0, Math.round(settlement.amountInr || 0)),
+        paymentMethod: settlement.paymentMethod || 'unknown',
+      };
+    }),
   };
 }
 
@@ -191,15 +256,28 @@ export function setExpenseStateFromServer(serverState: ExpenseStoreState): void 
 
 function seedDefaultTravellersIfNeeded(): void {
   let next = dedupeExpenseState(state);
-  let changed =
-    next.members.length !== state.members.length ||
-    next.members.some((member, index) => member.id !== state.members[index]?.id);
   for (const name of DEFAULT_TRAVELLER_NAMES) {
     if (next.members.some((member) => member.name.toLowerCase() === name.toLowerCase())) continue;
     next = { ...next, members: [...next.members, { id: stableMemberId(name), name }] };
-    changed = true;
   }
+  next = dedupeExpenseState(next);
+  const fingerprint = (s: ExpenseStoreState) =>
+    JSON.stringify({
+      members: s.members.map((m) => ({ id: m.id, name: m.name })),
+      expenses: s.expenses.map((e) => ({
+        id: e.id,
+        paidByPersonId: e.paidByPersonId,
+        splitExcludedPersonIds: e.splitExcludedPersonIds,
+      })),
+      transfers: s.transfers.map((t) => ({
+        id: t.id,
+        fromPersonId: t.fromPersonId,
+        toPersonId: t.toPersonId,
+      })),
+    });
+  const changed = fingerprint(next) !== fingerprint(state);
   state = next;
+  // Persist repaired stable ids so hosted sync stops reusing duplicate person ids.
   if (changed) save(state);
 }
 
