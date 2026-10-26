@@ -39,7 +39,9 @@ Rules:
 - "Rahul gave 5000 to Sanket cash" → action give, from Rahul, to Sanket, cash. (pool money, NOT settle)
 - "I have given the amount of train travel to Sanket" → action settle, to Sanket, note train travel, amountInr 0.
 - "Paid Sanket for dinner" / "cleared my share to Rahul" / "settled with Sanket" → settle.
+- "Milind gave 20000 to Rahul cash" → action give (trip float contribution to Rahul or Sanket).
 - "Sanket spent 2000 dinner from balance cash" → expense, paidBy Sanket, spentFromBalance true, balanceHolderName Sanket, cash.
+- Rahul and Sanket hold the shared pool; set spentFromBalance when the text says from balance / from pool.
 - "Sanket has done the expense of 200 rs through cash for dinner on 24th" → expense, paidBy Sanket (NOT the speaker), cash, Food, 24 Dec.
 - "25 dec dinner 2000 rahul online" → expense, paidBy Rahul, not from balance, online.
 - "Sanket spent 17500 on dinner exclude Allen, Piyu and Rutika" → expense, paidBy Sanket, splitEnabled true, excludedPersonNames ["Allen","Piyu","Rutika"]. Split among everyone else.

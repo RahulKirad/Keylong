@@ -48,6 +48,11 @@ import {
 import { memberBalanceRemaining } from './expenseLedger';
 import { parseMoneyUtterance } from './expenseParse';
 import { outstandingBetweenSimple } from './expenseSplit';
+import {
+  confirmDeductFromPool,
+  poolsWithRemaining,
+  preferredPoolForExpense,
+} from './poolManagers';
 import { getSelectedTraveller, subscribeSelectedTraveller } from './selectedTraveller';
 import { getDays, subscribeItinerary } from './itineraryStore';
 import {
@@ -467,7 +472,29 @@ export default function TripAssistant() {
           }\n\nSummed totals on **Spiti Tour Expenses** now hide cleared amounts.`,
         };
       }
-      const record = addExpense(parsed);
+      let expenseInput = { ...parsed };
+      if (!expenseInput.spentFromBalance) {
+        const stateNow = getExpenseState();
+        const pools = poolsWithRemaining(stateNow.members, stateNow.transfers, stateNow.expenses);
+        const preferred = preferredPoolForExpense(pools, expenseInput.paidByPersonId);
+        if (preferred) {
+          const chosen = confirmDeductFromPool({
+            amountInr: expenseInput.amountInr,
+            description: expenseInput.description,
+            pools,
+            preferred,
+          });
+          if (chosen) {
+            expenseInput = {
+              ...expenseInput,
+              spentFromBalance: true,
+              balanceHolderPersonId: chosen.member.id,
+              balanceHolderName: chosen.member.name,
+            };
+          }
+        }
+      }
+      const record = addExpense(expenseInput);
       const { transfers, expenses, members } = getExpenseState();
       const pay =
         record.paymentMethod === 'cash'

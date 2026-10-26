@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
+import { ChevronDown, Download } from 'lucide-react';
 import type { DebtSettlement, ExpenseRecord, TripMember } from './expenseStore';
 import {
   addDebtSettlement,
@@ -77,10 +77,25 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
   const [ledgerPairPage, setLedgerPairPage] = useState(1);
   const [ledgerSplitPage, setLedgerSplitPage] = useState(1);
   const [paidPage, setPaidPage] = useState(1);
+  /** Collapsed by default — spending breakdowns can get long. */
+  const [expandedPairs, setExpandedPairs] = useState<Set<string>>(() => new Set());
 
   useEffect(() => subscribeExpenses(() => {
     setDebtSettlements(getExpenseState().settlements || []);
   }), []);
+
+  function pairKey(fromId: string, toId: string): string {
+    return `${fromId}→${toId}`;
+  }
+
+  function togglePairExpanded(key: string) {
+    setExpandedPairs((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => {
     setReceivePage(1);
@@ -331,15 +346,12 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                 </div>
                 <strong>{fmt(r.totalToReceiveInr)}</strong>
                 <div className="expense-settle-chips">
-                  {r.fromDebtors.slice(0, 4).map((d) => (
+                  {r.fromDebtors.map((d) => (
                     <span key={d.member.id} className="expense-settle-chip">
                       <b>{d.member.name}</b>
                       <em>{fmt(d.amountInr)}</em>
                     </span>
                   ))}
-                  {r.fromDebtors.length > 4 ? (
-                    <span className="expense-settle-chip">+{r.fromDebtors.length - 4} more</span>
-                  ) : null}
                 </div>
               </article>
             ))}
@@ -519,6 +531,21 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                 </p>
               </div>
               <div className="expense-pair-board-tools">
+                {filteredPairs.length > 0 && (
+                  <button
+                    type="button"
+                    className="expense-pair-expand-all"
+                    onClick={() => {
+                      const keys = filteredPairs.map((p) => pairKey(p.from.id, p.to.id));
+                      const allOpen = keys.every((k) => expandedPairs.has(k));
+                      setExpandedPairs(allOpen ? new Set() : new Set(keys));
+                    }}
+                  >
+                    {filteredPairs.every((p) => expandedPairs.has(pairKey(p.from.id, p.to.id)))
+                      ? 'Collapse all'
+                      : 'Expand all'}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="expense-split-pdf-btn is-ghost"
@@ -561,68 +588,102 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
             ) : (
               <>
                 <ul className="expense-pair-list">
-                  {pagedPairs.slice.map((p) => (
-                    <li key={`${p.from.id}-${p.to.id}`} className="expense-pair-row">
-                      <div className="expense-pair-flow">
-                        <div className="expense-pair-person">
-                          <span className="expense-settle-avatar is-sm" aria-hidden>
-                            {p.from.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <div>
-                            <small>Who pays</small>
-                            <strong>{p.from.name}</strong>
-                          </div>
-                        </div>
-                        <span className="expense-pair-arrow" aria-hidden>
-                          →
-                        </span>
-                        <div className="expense-pair-person">
-                          <span className="expense-settle-avatar is-sm is-receive-tone" aria-hidden>
-                            {p.to.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <div>
-                            <small>Pays to</small>
-                            <strong>{p.to.name}</strong>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="expense-pair-amount">
-                        <small>Pending</small>
-                        <strong>{fmt(p.amountInr)}</strong>
-                      </div>
-
-                      <div className="expense-pair-breakdown">
-                        <small>Breakdown</small>
-                        <div className="expense-pair-parts">
-                          {p.parts.map((part, idx) => (
-                            <span key={`${part.expenseId || part.description}-${idx}`} className="expense-pair-part">
-                              <em>{fmt(part.amountInr)}</em> {part.description}
-                              <i>({part.dateLabel})</i>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="expense-pair-action">
+                  {pagedPairs.slice.map((p) => {
+                    const key = pairKey(p.from.id, p.to.id);
+                    const open = expandedPairs.has(key);
+                    const spendCount = p.parts.length;
+                    return (
+                      <li
+                        key={key}
+                        className={`expense-pair-row${open ? ' is-open' : ''}`}
+                      >
                         <button
                           type="button"
-                          className="expense-pair-mark"
-                          onClick={() =>
-                            setMarkPair({
-                              fromId: p.from.id,
-                              toId: p.to.id,
-                              amount: p.amountInr,
-                              maxAmount: p.amountInr,
-                              note: p.parts.map((x) => x.description).join(', '),
-                            })
-                          }
+                          className="expense-pair-summary"
+                          aria-expanded={open}
+                          onClick={() => togglePairExpanded(key)}
                         >
-                          Mark paid
+                          <span className={`expense-pair-chevron${open ? ' is-open' : ''}`} aria-hidden>
+                            <ChevronDown size={16} />
+                          </span>
+                          <div className="expense-pair-flow">
+                            <div className="expense-pair-person">
+                              <span className="expense-settle-avatar is-sm" aria-hidden>
+                                {p.from.name.slice(0, 1).toUpperCase()}
+                              </span>
+                              <div>
+                                <small>Who pays</small>
+                                <strong>{p.from.name}</strong>
+                              </div>
+                            </div>
+                            <span className="expense-pair-arrow" aria-hidden>
+                              →
+                            </span>
+                            <div className="expense-pair-person">
+                              <span className="expense-settle-avatar is-sm is-receive-tone" aria-hidden>
+                                {p.to.name.slice(0, 1).toUpperCase()}
+                              </span>
+                              <div>
+                                <small>Pays to</small>
+                                <strong>{p.to.name}</strong>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="expense-pair-amount">
+                            <small>Pending</small>
+                            <strong>{fmt(p.amountInr)}</strong>
+                          </div>
+                          <div className="expense-pair-preview">
+                            <small>Spends</small>
+                            <strong>
+                              {spendCount} item{spendCount === 1 ? '' : 's'}
+                            </strong>
+                            {!open && spendCount > 0 && (
+                              <em>
+                                {p.parts[0].description}
+                                {spendCount > 1 ? ` +${spendCount - 1} more` : ''}
+                              </em>
+                            )}
+                          </div>
                         </button>
-                      </div>
-                    </li>
-                  ))}
+
+                        <div className="expense-pair-action">
+                          <button
+                            type="button"
+                            className="expense-pair-mark"
+                            onClick={() =>
+                              setMarkPair({
+                                fromId: p.from.id,
+                                toId: p.to.id,
+                                amount: p.amountInr,
+                                maxAmount: p.amountInr,
+                                note: p.parts.map((x) => x.description).join(', '),
+                              })
+                            }
+                          >
+                            Mark paid
+                          </button>
+                        </div>
+
+                        {open && (
+                          <div className="expense-pair-breakdown" id={`pair-break-${key}`}>
+                            <small>Breakdown</small>
+                            <div className="expense-pair-parts">
+                              {p.parts.map((part, idx) => (
+                                <span
+                                  key={`${part.expenseId || part.description}-${idx}`}
+                                  className="expense-pair-part"
+                                >
+                                  <em>{fmt(part.amountInr)}</em> {part.description}
+                                  <i>({part.dateLabel})</i>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
                 <ListPager
                   page={pagedPairs.safePage}

@@ -20,6 +20,7 @@ import {
   setTravellerProfilesFromServer,
   type TravellerProfile,
 } from './travellerProfileStore';
+import { getPoolManagerIds, setPoolManagersFromServer } from './poolManagers';
 
 export type SyncStatusState = {
   status: 'synced' | 'syncing' | 'offline' | 'error';
@@ -69,6 +70,7 @@ let lastSyncHash = '';
  */
 const SETTLEMENTS_BLOB_ID = 'shared_settlements';
 const PROFILES_BLOB_ID = 'shared_traveller_profiles';
+const POOL_MANAGERS_BLOB_ID = 'shared_pool_managers';
 
 function parseSettlementBlob(raw: unknown, remap: Map<string, string>): DebtSettlement[] {
   if (!Array.isArray(raw)) return [];
@@ -224,7 +226,7 @@ export async function pullDatabase(): Promise<boolean> {
       supabase
         .from('trip_budget')
         .select('*')
-        .in('id', ['singleton', SETTLEMENTS_BLOB_ID, PROFILES_BLOB_ID]),
+        .in('id', ['singleton', SETTLEMENTS_BLOB_ID, PROFILES_BLOB_ID, POOL_MANAGERS_BLOB_ID]),
     ]);
 
     if (membersRes.error) throw membersRes.error;
@@ -240,6 +242,7 @@ export async function pullDatabase(): Promise<boolean> {
     };
     const settlementsBlobRow = budgetRows.find((r: any) => r.id === SETTLEMENTS_BLOB_ID);
     const profilesBlobRow = budgetRows.find((r: any) => r.id === PROFILES_BLOB_ID);
+    const poolManagersBlobRow = budgetRows.find((r: any) => r.id === POOL_MANAGERS_BLOB_ID);
 
     const rawMembers = (membersRes.data || []).map((r: any) => ({
       id: r.id as string,
@@ -346,6 +349,17 @@ export async function pullDatabase(): Promise<boolean> {
 
     if (profilesBlobRow) {
       setTravellerProfilesFromServer(parseProfileBlob(profilesBlobRow.categories, remap));
+    }
+    if (poolManagersBlobRow) {
+      const rawIds = Array.isArray(poolManagersBlobRow.categories)
+        ? poolManagersBlobRow.categories
+        : Array.isArray(poolManagersBlobRow.categories?.personIds)
+          ? poolManagersBlobRow.categories.personIds
+          : [];
+      const remapped = (rawIds as string[])
+        .map((id) => personId(String(id), remap) || String(id))
+        .filter(Boolean);
+      if (remapped.length) setPoolManagersFromServer(remapped);
     }
 
     if (budget && budget.categories && budget.categories.length > 0) {
@@ -600,6 +614,22 @@ export async function pushSync(): Promise<boolean> {
             {
               id: PROFILES_BLOB_ID,
               categories: profileBlob,
+              travelers: 0,
+              trip_target: 0,
+              updated_at: Date.now(),
+            },
+            { onConflict: 'id' },
+          ),
+      },
+      {
+        table: 'trip_budget',
+        run: () =>
+          supabase.from('trip_budget').upsert(
+            {
+              id: POOL_MANAGERS_BLOB_ID,
+              categories: getPoolManagerIds(collapsed.members).map(
+                (id) => personId(id, remap) || id,
+              ),
               travelers: 0,
               trip_target: 0,
               updated_at: Date.now(),

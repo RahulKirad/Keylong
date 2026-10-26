@@ -36,7 +36,23 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
     if (dropped.id !== keeper.id) remap.set(dropped.id, keeper.id);
   }
 
-  const keeperIds = new Set([...byName.values()].map((member) => member.id));
+  // Different names must never share one id (hosted sync sometimes reuses a payer id).
+  const usedIds = new Set<string>();
+  const unique: T[] = [];
+  for (const member of byName.values()) {
+    let next = member;
+    if (!next.id || usedIds.has(next.id)) {
+      // Keep the first owner of the shared id; give this traveller a fresh stable id.
+      // Do not remap the shared id — it still belongs to the earlier keeper (e.g. Sanket).
+      let id = stableMemberId(next.name);
+      if (!id || usedIds.has(id)) id = `${stableMemberId(next.name)}-${unique.length + 1}`;
+      next = { ...member, id };
+    }
+    usedIds.add(next.id);
+    unique.push(next);
+  }
+
+  const keeperIds = new Set(unique.map((member) => member.id));
   for (const [from, to] of [...remap.entries()]) {
     let cursor = to;
     const seen = new Set<string>();
@@ -47,7 +63,7 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
     remap.set(from, keeperIds.has(cursor) ? cursor : to);
   }
 
-  return { members: [...byName.values()], remap };
+  return { members: unique, remap };
 }
 
 export function remapId(id: string | undefined, remap: Map<string, string>): string | undefined {
