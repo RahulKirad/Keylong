@@ -178,10 +178,18 @@ export function buildNetBalances(
     }
   }
 
-  // Settlements: debtor paid creditor → move nets toward zero.
+  // Settlements: debtor paid creditor → move nets toward zero (id or name).
   for (const s of settlements) {
-    net.set(s.fromPersonId, (net.get(s.fromPersonId) || 0) + s.amountInr);
-    net.set(s.toPersonId, (net.get(s.toPersonId) || 0) - s.amountInr);
+    const from =
+      members.find((m) => m.id === s.fromPersonId)?.id ||
+      members.find((m) => normName(m.name) === normName(s.fromPersonName))?.id ||
+      s.fromPersonId;
+    const to =
+      members.find((m) => m.id === s.toPersonId)?.id ||
+      members.find((m) => normName(m.name) === normName(s.toPersonName))?.id ||
+      s.toPersonId;
+    net.set(from, (net.get(from) || 0) + s.amountInr);
+    net.set(to, (net.get(to) || 0) - s.amountInr);
   }
 
   return members.map((member) => ({

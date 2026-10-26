@@ -14,7 +14,7 @@ import {
   TripAssignment,
 } from './assignmentStore';
 import { BUDGET_STORAGE_KEY, BudgetCategory } from './budgetData';
-import { collapseMembers } from './memberIdentity';
+import { collapseMembers, resolveMemberId, samePersonName } from './memberIdentity';
 import {
   listTravellerProfiles,
   setTravellerProfilesFromServer,
@@ -178,29 +178,77 @@ function personId(id: string | undefined, remap: Map<string, string>): string {
   return remap.get(id) || id;
 }
 
-/** Delete repeated names from the shared database and point tasks and expenses at the one record that remains. */
+/**
+ * Safely migrate travellers onto stable ids without wiping the roster.
+ * 1) Upsert keepers first (so new ids exist before old ones go away)
+ * 2) Retarget FKs only for unambiguous remaps
+ * 3) Delete only obsolete rows (name-duplicates or migrated old ids) — never
+ *    delete every row just because ids were rewritten to member-<slug>.
+ */
 async function removeDuplicateTravellers(
   rows: { id: string; name: string }[],
   remap: Map<string, string>,
 ): Promise<void> {
-  const keep = new Set(collapseMembers(rows).members.map((member) => member.id));
-  const dropIds = rows.map((row) => row.id).filter((id) => !keep.has(id));
+  const { members: keepers, remap: fullRemap } = collapseMembers(rows);
+  const effectiveRemap = remap.size > 0 ? remap : fullRemap;
+
+  // 1. Ensure stable-id rows exist before any deletes.
+  if (keepers.length > 0) {
+    const { error: upsertError } = await supabase.from('trip_members').upsert(
+      keepers.map((m) => ({ id: m.id, name: m.name })),
+      { onConflict: 'id' },
+    );
+    if (upsertError) {
+      console.warn('Could not upsert normalised travellers:', upsertError.message);
+      return;
+    }
+  }
+
+  // 2. Retarget links for unambiguous old→new id remaps only.
+  if (effectiveRemap.size > 0) {
+    const writes = [...effectiveRemap.entries()]
+      .filter(([from, to]) => from && to && from !== to)
+      .flatMap(([from, to]) => [
+        supabase.from('trip_assignments').update({ assignee_person_id: to }).eq('assignee_person_id', from),
+        supabase.from('trip_expenses').update({ paid_by_person_id: to }).eq('paid_by_person_id', from),
+        supabase
+          .from('trip_expenses')
+          .update({ balance_holder_person_id: to })
+          .eq('balance_holder_person_id', from),
+        supabase.from('trip_expenses').update({ given_by_person_id: to }).eq('given_by_person_id', from),
+        supabase.from('trip_transfers').update({ from_person_id: to }).eq('from_person_id', from),
+        supabase.from('trip_transfers').update({ to_person_id: to }).eq('to_person_id', from),
+      ]);
+    const results = await Promise.all(writes);
+    for (const result of results) {
+      if (result.error) console.warn('Could not retarget traveller link:', result.error.message);
+    }
+  }
+
+  // 3. Drop only true extras: same-name duplicates, or old ids that remapped away.
+  const keeperIds = new Set(keepers.map((m) => m.id));
+  const nameCounts = new Map<string, number>();
+  for (const row of rows) {
+    const key = row.name.trim().toLowerCase();
+    if (!key) continue;
+    nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+  }
+  const dropIds = [
+    ...new Set(
+      rows
+        .filter((row) => {
+          if (keeperIds.has(row.id)) return false;
+          const key = row.name.trim().toLowerCase();
+          const isNameDup = (nameCounts.get(key) || 0) > 1;
+          const migrated = effectiveRemap.has(row.id) && effectiveRemap.get(row.id) !== row.id;
+          return isNameDup || migrated;
+        })
+        .map((row) => row.id),
+    ),
+  ];
   if (dropIds.length > 0) {
     const { error } = await supabase.from('trip_members').delete().in('id', dropIds);
     if (error) console.warn('Could not remove duplicate travellers:', error.message);
-  }
-  if (remap.size === 0) return;
-  const writes = [...remap.entries()].flatMap(([from, to]) => [
-    supabase.from('trip_assignments').update({ assignee_person_id: to }).eq('assignee_person_id', from),
-    supabase.from('trip_expenses').update({ paid_by_person_id: to }).eq('paid_by_person_id', from),
-    supabase.from('trip_expenses').update({ balance_holder_person_id: to }).eq('balance_holder_person_id', from),
-    supabase.from('trip_expenses').update({ given_by_person_id: to }).eq('given_by_person_id', from),
-    supabase.from('trip_transfers').update({ from_person_id: to }).eq('from_person_id', from),
-    supabase.from('trip_transfers').update({ to_person_id: to }).eq('to_person_id', from),
-  ]);
-  const results = await Promise.all(writes);
-  for (const result of results) {
-    if (result.error) console.warn('Could not retarget traveller link:', result.error.message);
   }
 }
 
@@ -255,32 +303,58 @@ export async function pullDatabase(): Promise<boolean> {
       await removeDuplicateTravellers(rawMembers, remap);
     }
 
-    const expenses: ExpenseRecord[] = (expensesRes.data || []).map((r: any) => ({
-      id: r.id,
-      tripDate: r.trip_date || '',
-      dateLabel: r.date_label || '',
-      description: r.description || '',
-      category: r.category || '',
-      amountInr: r.amount_inr || 0,
-      paidByPersonId: personId(r.paid_by_person_id, remap),
-      paidByName: r.paid_by_name || '',
-      paymentMethod: r.payment_method || 'unknown',
-      spentFromBalance: Boolean(r.spent_from_balance),
-      balanceHolderPersonId: personId(r.balance_holder_person_id, remap) || undefined,
-      balanceHolderName: r.balance_holder_name || undefined,
-      givenByPersonId: personId(r.given_by_person_id, remap) || undefined,
-      givenByName: r.given_by_name || undefined,
-      countInTotal: r.count_in_total !== false,
-      splitEnabled: r.split_enabled !== false,
-      splitExcludedPersonIds: Array.isArray(r.split_excluded_person_ids)
-        ? (r.split_excluded_person_ids as string[])
-            .map((id: string) => personId(id, remap) || id)
-            .filter(Boolean)
-        : [],
-      createdAt: r.created_at || 0,
-      updatedAt: r.updated_at || 0,
-      source: r.source || 'manual',
-    }));
+    const expenses: ExpenseRecord[] = (expensesRes.data || []).map((r: any) => {
+      const paidByName = String(r.paid_by_name || '');
+      const paidByFromName = members.find((m) => samePersonName(m.name, paidByName));
+      const paidByPersonId =
+        paidByFromName?.id ||
+        resolveMemberId(r.paid_by_person_id, members, remap) ||
+        personId(r.paid_by_person_id, remap);
+      const balanceHolderName = r.balance_holder_name || undefined;
+      const balanceFromName = balanceHolderName
+        ? members.find((m) => samePersonName(m.name, balanceHolderName))
+        : undefined;
+      const givenByName = r.given_by_name || undefined;
+      const givenFromName = givenByName
+        ? members.find((m) => samePersonName(m.name, givenByName))
+        : undefined;
+      // Preserve exclusions: remap/resolve ids, never drop a still-valid exclusion silently.
+      const splitExcludedPersonIds = Array.isArray(r.split_excluded_person_ids)
+        ? [
+            ...new Set(
+              (r.split_excluded_person_ids as string[])
+                .map((id: string) => resolveMemberId(id, members, remap) || id)
+                .filter((id: string) => Boolean(id) && id !== paidByPersonId),
+            ),
+          ]
+        : [];
+      return {
+        id: r.id,
+        tripDate: r.trip_date || '',
+        dateLabel: r.date_label || '',
+        description: r.description || '',
+        category: r.category || '',
+        amountInr: r.amount_inr || 0,
+        paidByPersonId,
+        paidByName: paidByFromName?.name || paidByName,
+        paymentMethod: r.payment_method || 'unknown',
+        spentFromBalance: Boolean(r.spent_from_balance),
+        balanceHolderPersonId:
+          balanceFromName?.id ||
+          resolveMemberId(r.balance_holder_person_id, members, remap) ||
+          undefined,
+        balanceHolderName: balanceFromName?.name || balanceHolderName,
+        givenByPersonId:
+          givenFromName?.id || resolveMemberId(r.given_by_person_id, members, remap) || undefined,
+        givenByName: givenFromName?.name || givenByName,
+        countInTotal: r.count_in_total !== false,
+        splitEnabled: r.split_enabled !== false,
+        splitExcludedPersonIds,
+        createdAt: r.created_at || 0,
+        updatedAt: r.updated_at || 0,
+        source: r.source || 'manual',
+      };
+    });
 
     const transfers: FundTransfer[] = (transfersRes.data || []).map((r: any) => ({
       id: r.id,

@@ -16,12 +16,11 @@ export function samePersonName(a: string | undefined, b: string | undefined): bo
 
 /**
  * Keep one record per name, then force every person onto a unique stable id
- * (`member-<slug>`). Hosted data sometimes reuses one id for two travellers
- * (e.g. Rahul + Sanket both share Sanket’s id) which drops someone from Splitwise.
+ * (`member-<slug>`).
  *
- * `remap` maps old ids → the keeper’s stable id. If two people shared one old id,
- * the first person processed claims that remap; the second still gets their own
- * new stable id (payer / splits resolve by name as a safety net).
+ * If two different people shared one old id, that old id is NOT put in `remap`
+ * (ambiguous). Callers must resolve payers / exclusions by name in that case.
+ * Each person still receives their own unique stable id in `members`.
  */
 export function collapseMembers<T extends NamedMember>(members: T[]): {
   members: T[];
@@ -44,25 +43,33 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
     byName.set(key, keepNew ? member : existing);
   }
 
-  const remap = new Map<string, string>();
   const usedIds = new Set<string>();
   const unique: T[] = [];
+  /** oldId → list of new stable ids that came from it */
+  const claims = new Map<string, string[]>();
 
   for (const member of byName.values()) {
     let id = stableMemberId(member.name);
     if (usedIds.has(id)) id = `${id}-${unique.length + 1}`;
 
     const oldId = (member.id || '').trim();
-    if (oldId && oldId !== id && !remap.has(oldId)) {
-      // First claimant of a duplicated old id wins the remap entry.
-      remap.set(oldId, id);
+    if (oldId && oldId !== id) {
+      const list = claims.get(oldId) || [];
+      list.push(id);
+      claims.set(oldId, list);
     }
 
     usedIds.add(id);
     unique.push({ ...member, id });
   }
 
-  // Flatten remap chains and drop identity mappings.
+  const remap = new Map<string, string>();
+  for (const [oldId, targets] of claims.entries()) {
+    // Only remap when exactly one person owned that old id.
+    if (targets.length === 1) remap.set(oldId, targets[0]);
+  }
+
+  // Flatten chains and drop identity mappings.
   for (const [from, to] of [...remap.entries()]) {
     let cursor = to;
     const seen = new Set<string>();
@@ -82,4 +89,35 @@ export function collapseMembers<T extends NamedMember>(members: T[]): {
 export function remapId(id: string | undefined, remap: Map<string, string>): string | undefined {
   if (!id) return id;
   return remap.get(id) || id;
+}
+
+/**
+ * Map an exclusion / foreign id onto a member. Prefer remap, then exact id,
+ * then slug match inside legacy ids like `mem-3-allen` — never invent exclusions.
+ */
+export function resolveMemberId(
+  rawId: string | undefined,
+  members: NamedMember[],
+  remap: Map<string, string> = new Map(),
+): string | undefined {
+  if (!rawId) return undefined;
+  const remapped = remap.get(rawId);
+  if (remapped && members.some((m) => m.id === remapped)) return remapped;
+  const exact = members.find((m) => m.id === rawId);
+  if (exact) return exact.id;
+  const lower = rawId.toLowerCase();
+  const byStable = members.find((m) => m.id === rawId || stableMemberId(m.name) === rawId);
+  if (byStable) return byStable.id;
+  for (const m of members) {
+    const slug = m.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (!slug) continue;
+    if (lower === `member-${slug}` || lower.endsWith(`-${slug}`) || lower.includes(`-${slug}-`)) {
+      return m.id;
+    }
+  }
+  return remap.get(rawId) || rawId;
 }
