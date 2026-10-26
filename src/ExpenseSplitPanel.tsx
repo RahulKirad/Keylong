@@ -23,9 +23,10 @@ import ListPager, { pageSlice } from './ListPager';
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
-const PAGE_CARDS = 5;
-const PAGE_PAIRS = 6;
-const PAGE_TABLE = 8;
+/** Keep high enough that a full 10-traveller group fits without hiding names. */
+const PAGE_CARDS = 20;
+const PAGE_PAIRS = 40;
+const PAGE_TABLE = 12;
 
 function formatLoggedAt(ts: number): string {
   if (!ts) return '—';
@@ -178,7 +179,14 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
           p.to.name.toLowerCase() === focusName.toLowerCase();
         if (!hit) return false;
       }
-      if (payerFilter !== 'all' && p.to.id !== payerFilter) return false;
+      // Person filter: show debts involving them as payer or receiver.
+      if (
+        payerFilter !== 'all' &&
+        p.to.id !== payerFilter &&
+        p.from.id !== payerFilter
+      ) {
+        return false;
+      }
       if (!q) return true;
       const blob = `${p.from.name} ${p.to.name} ${p.parts.map((x) => x.description).join(' ')}`.toLowerCase();
       return blob.includes(q);
@@ -200,13 +208,30 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
   const filteredPay = useMemo(() => {
     return payRows.filter((r) => {
       if (focusName && r.member.name.toLowerCase() !== focusName.toLowerCase()) return false;
+      if (
+        payerFilter !== 'all' &&
+        r.member.id !== payerFilter &&
+        !r.toCreditors.some((c) => c.member.id === payerFilter)
+      ) {
+        return false;
+      }
       if (!q) return true;
       return (
         r.member.name.toLowerCase().includes(q) ||
         r.toCreditors.some((d) => d.member.name.toLowerCase().includes(q))
       );
     });
-  }, [payRows, focusName, q]);
+  }, [payRows, focusName, payerFilter, q]);
+
+  /** Full name roll-call of everyone who still owes (for Clear debts header). */
+  const owingRoster = useMemo(() => {
+    return filteredPay.map((r) => ({
+      id: r.member.id,
+      name: r.member.name,
+      amountInr: r.totalToPayInr,
+      toNames: r.toCreditors.map((c) => c.member.name).join(', '),
+    }));
+  }, [filteredPay]);
 
   const filteredPaid = useMemo(() => {
     return [...debtSettlements]
@@ -350,7 +375,7 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
         filters={[
           {
             id: 'payer',
-            label: 'Paid by / receive',
+            label: 'Traveller',
             value: payerFilter,
             onChange: setPayerFilter,
             options: [
@@ -489,7 +514,8 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                 <p className="expense-settle-kicker">Clear debts</p>
                 <h4>Pending pair totals</h4>
                 <p>
-                  Outstanding only. Tap <b>Mark paid</b> when the money has been given (or say it in chat).
+                  Full list of who still needs to pay. Tap <b>Mark paid</b> when the money has been given (or say it in
+                  chat).
                 </p>
               </div>
               <div className="expense-pair-board-tools">
@@ -503,6 +529,32 @@ export default function ExpenseSplitPanel({ members, expenses, focusName }: Prop
                 <span className="expense-settle-count">{filteredPairs.length}</span>
               </div>
             </header>
+
+            {owingRoster.length > 0 && (
+              <div className="expense-owing-roster" aria-label="Everyone who needs to pay">
+                <div className="expense-owing-roster-head">
+                  <strong>Who needs to pay</strong>
+                  <span>
+                    {owingRoster.length} traveller{owingRoster.length === 1 ? '' : 's'} · {filteredPairs.length} pending
+                    pair{filteredPairs.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <ul className="expense-owing-roster-list">
+                  {owingRoster.map((row) => (
+                    <li key={row.id}>
+                      <span className="expense-settle-avatar is-sm" aria-hidden>
+                        {row.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{row.name}</strong>
+                        <small>to {row.toNames}</small>
+                      </div>
+                      <em>{fmt(row.amountInr)}</em>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {filteredPairs.length === 0 ? (
               <p className="expense-settle-empty">Nothing pending — all cleared or no splits yet.</p>
